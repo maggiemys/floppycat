@@ -182,7 +182,7 @@ pvp_countdown_seconds,3
 7. **Room cleanup.** Server deletes rooms 5 minutes after both players disconnect, or 10 minutes after creation if only one player ever joined (abandoned room).
 8. **Score tiebreaker.** Same score = coin flip. Server picks a random winner and sends the result to both clients. No draws.
 9. **Race timeout after first death.** 10 seconds (configurable via `pvp_result_timeout` in config.csv). Long enough to let the survivor rack up a lead, short enough to not bore the dead player.
-10. **Ghost cat on opponent death.** Ghost cat shows X eyes and freezes at its last position. Fades out over 1 second. Ghost cat is rendered in pink (body/head/tail use pink tones instead of orange) so it's instantly distinguishable from the player's cat.
+10. **Ghost cat on opponent death.** Ghost cat shows X eyes and freezes at its last position. Fades out over 1 second. Ghost cat is rendered in green so it's instantly distinguishable from the player's cat.
 11. **Rematch flow.** Both players must tap rematch. Server generates a new seed. Same room, no new link needed.
 12. **State update throttling.** Send at 20 updates/sec (every 3rd frame at 60fps) instead of every frame. Interpolate ghost cat position on the receiving end for smooth rendering. Keeps server relay load reasonable.
 13. **Lobby rendering.** Canvas-rendered, same as menu and game-over screens. Keeps everything in the engine — no React UI needed for PVP screens.

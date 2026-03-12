@@ -33,9 +33,9 @@ const PLAYER_COLORS: CatColors = {
 };
 
 const GHOST_COLORS: CatColors = {
-  body: "#FFB6C1",
-  stroke: "#E8879B",
-  paw: "#FFCDD8",
+  body: "#90EE90",
+  stroke: "#3CB371",
+  paw: "#B2F2B2",
 };
 
 // ── Layout constants for hit-testable UI ────────────────
@@ -343,9 +343,9 @@ export class GameView {
       const drawH = bh * 2;
       const drawW = drawH * aspect;
 
-      // Pink hue shift for ghost/opponent cat
+      // Green hue shift for ghost/opponent cat
       if (colors === GHOST_COLORS) {
-        ctx.filter = "hue-rotate(320deg) saturate(1.3)";
+        ctx.filter = "hue-rotate(90deg) saturate(1.5)";
       }
 
       ctx.drawImage(this.catSprite, -drawW / 2, -drawH / 2, drawW, drawH);
@@ -682,10 +682,10 @@ export class GameView {
     ctx.fillStyle = "white";
     ctx.fillText(String(score), 16, 14);
 
-    // Opponent score (right, pink)
+    // Opponent score (right, green)
     ctx.textAlign = "right";
     ctx.strokeText(String(pvp.opponent.score), w - 16, 14);
-    ctx.fillStyle = "#FFB6C1";
+    ctx.fillStyle = "#90EE90";
     ctx.fillText(String(pvp.opponent.score), w - 16, 14);
 
     // Labels
