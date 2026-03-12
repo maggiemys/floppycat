@@ -1,27 +1,54 @@
 import { useState, useEffect, useLayoutEffect } from "react";
+import { loadConfig } from "@/data/loadData";
+import GameCanvas from "@/components/GameCanvas";
+import { GameConfig } from "@/engine/types";
+
+const DEFAULT_WS_URL = "ws://localhost:8080";
+const WS_URL = import.meta.env.VITE_WS_URL ?? DEFAULT_WS_URL;
+
+/** Parse the flat config map from CSV into a typed GameConfig. */
+function parseGameConfig(configMap: Map<string, string>): GameConfig {
+  const num = (key: string, fallback: number): number => {
+    const val = configMap.get(key);
+    return val !== undefined ? parseFloat(val) : fallback;
+  };
+  return {
+    gravity: num("gravity", 1200),
+    jumpVelocity: num("jump_velocity", -420),
+    scrollSpeed: num("scroll_speed", 150),
+    pipeWidth: num("pipe_width", 52),
+    pipeGapHeight: num("pipe_gap_height", 150),
+    pipeSpacing: num("pipe_spacing", 220),
+    minGapHeight: num("min_gap_height", 100),
+    difficultyInterval: num("difficulty_interval", 10),
+    gapShrinkPerStep: num("gap_shrink_per_step", 5),
+    speedIncreasePerStep: num("speed_increase_per_step", 10),
+    catWidth: num("cat_width", 40),
+    catHeight: num("cat_height", 30),
+    catX: num("cat_x", 0.2),
+    groundHeight: num("ground_height", 60),
+    maxVelocity: num("max_velocity", 600),
+    rotationFactor: num("rotation_factor", 0.002),
+    pvpResultTimeout: num("pvp_result_timeout", 10),
+    pvpCountdownSeconds: num("pvp_countdown_seconds", 3),
+  };
+}
+
+/** Extract ?room= parameter from URL. */
+function getPvpRoomId(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("room");
+}
 
 export default function App() {
-  const [config, setConfig] = useState<Map<string, string>>(new Map());
+  const [gameConfig, setGameConfig] = useState<GameConfig | null>(null);
+  const [pvpRoomId] = useState<string | null>(() => getPvpRoomId());
 
   useEffect(() => {
-    fetch("/config.csv")
-      .then((r) => r.text())
-      .then((text) => {
-        const lines = text.trim().split("\n").slice(1);
-        const map = new Map<string, string>();
-        for (const line of lines) {
-          const [key, ...rest] = line.split(",");
-          map.set(key.trim(), rest.join(",").trim());
-        }
-        setConfig(map);
-      });
+    loadConfig().then((map) => setGameConfig(parseGameConfig(map)));
   }, []);
 
   // ── Viewport management ──────────────────────────────────
-  // Keeps --app-height, --game-height, --game-width in sync with the
-  // real visible area. Handles mobile URL bar show/hide, keyboard popup,
-  // orientation changes, and pinch zoom — all the things that make
-  // mobile viewport sizing unreliable with pure CSS.
   useLayoutEffect(() => {
     const root = document.documentElement;
     let rafId = 0;
@@ -53,18 +80,20 @@ export default function App() {
     };
   }, []);
 
+  if (!gameConfig) {
+    return (
+      <div className="app-shell relative mx-auto flex w-full flex-col overflow-hidden">
+        <div className="game-screen flex flex-col items-center justify-center">
+          <p className="ink-soft">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell relative mx-auto flex w-full flex-col overflow-hidden">
-      <div className="game-screen flex flex-col items-center justify-center gap-6">
-        {/* Replace with your logo: drop an image in data/sprites/logo.png */}
-        <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg">
-          <span className="text-white text-4xl font-bold">?</span>
-        </div>
-        <h1 className="text-2xl font-bold ink-strong">
-          {config.get("app_name") || "Loading..."}
-        </h1>
-        <p className="text-sm ink-soft">v0.1.0</p>
-        <button className="ui-cta mt-4">Start</button>
+      <div className="game-screen">
+        <GameCanvas config={gameConfig} wsUrl={WS_URL} pvpRoomId={pvpRoomId} />
       </div>
     </div>
   );

@@ -8,6 +8,23 @@ All CSVs live in `data/` and are loaded at runtime. Values are read as strings a
 - Meaning: global tunables.
 - Example rows:
   - `app_name,FloppyCat`
+  - `gravity,1200` — downward acceleration (px/s^2)
+  - `jump_velocity,-420` — upward impulse on jump (px/s, negative = up)
+  - `scroll_speed,150` — initial horizontal obstacle speed (px/s)
+  - `pipe_width,52` — obstacle width (px)
+  - `pipe_gap_height,150` — initial gap between top/bottom pipes (px)
+  - `pipe_spacing,220` — horizontal distance between pipe centers (px)
+  - `min_gap_height,100` — smallest gap after difficulty scaling (px)
+  - `difficulty_interval,10` — seconds between difficulty increases
+  - `gap_shrink_per_step,5` — gap reduction per difficulty step (px)
+  - `speed_increase_per_step,10` — speed increase per difficulty step (px/s)
+  - `cat_width,40` / `cat_height,30` — cat hitbox dimensions (px)
+  - `cat_x,0.2` — horizontal position as fraction of canvas width
+  - `ground_height,60` — ground strip height from bottom (px)
+  - `max_velocity,600` — terminal falling speed (px/s)
+  - `rotation_factor,0.002` — how velocity maps to visual tilt
+  - `pvp_result_timeout,10` — seconds to wait after first death before ending PVP race
+  - `pvp_countdown_seconds,3` — countdown duration before PVP race starts
 
 ## Validation rules
 
