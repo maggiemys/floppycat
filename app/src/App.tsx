@@ -3,7 +3,7 @@ import { loadConfig } from "@/data/loadData";
 import GameCanvas from "@/components/GameCanvas";
 import { GameConfig } from "@/engine/types";
 
-const DEFAULT_WS_URL = "ws://localhost:8080";
+const DEFAULT_WS_URL = "wss://floppycat.onrender.com";
 const WS_URL = import.meta.env.VITE_WS_URL ?? DEFAULT_WS_URL;
 
 /** Parse the flat config map from CSV into a typed GameConfig. */
