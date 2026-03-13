@@ -27,6 +27,28 @@ All CSVs live in `data/` and are loaded at runtime. Values are read as strings a
   - `multi_max_players,10` — maximum players per multiplayer room (2-10)
   - `multi_last_alive_timeout,10` — seconds to wait after second-to-last death before ending race
 
+## leaderboard.db (SQLite)
+
+Server-side database created automatically by `server/leaderboard.ts`.
+
+### scores table
+
+| Column | Type | Constraints | Purpose |
+|--------|------|-------------|---------|
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | Unique score ID |
+| `name` | TEXT | NOT NULL, max 16 chars | Player display name |
+| `score` | INTEGER | NOT NULL, 0-999 | Pipes passed |
+| `created_at` | TEXT | NOT NULL, default `datetime('now')` | UTC timestamp |
+| `ip` | TEXT | | Client IP for rate limiting (not exposed via API) |
+
+Indexes: `idx_scores_score` (score DESC), `idx_scores_created_at`.
+
+### API
+
+- `GET /api/scores?period=daily|weekly|alltime` — top 50 scores for the period
+- `POST /api/scores` body `{ name, score }` — returns `{ id, rank: { daily, weekly, alltime } }`
+- Rate limit: 1 submission per 5 seconds per IP (HTTP 429 on violation)
+
 ## Validation rules
 
 - When adding a new CSV, document its schema and constraints in this file.

@@ -12,6 +12,7 @@ export enum GamePhase {
   Menu = "menu",
   Playing = "playing",
   GameOver = "gameover",
+  Leaderboard = "leaderboard",
   // Multiplayer (covers 2-10 players, replaces old PVP phases)
   MultiLobby = "multi_lobby",
   MultiCountdown = "multi_countdown",
@@ -107,6 +108,29 @@ export interface MultiplayerState {
   error: string | null;
 }
 
+// ── Leaderboard ─────────────────────────────────────────
+
+export type LeaderboardPeriod = "daily" | "weekly" | "alltime";
+
+export interface LeaderboardEntry {
+  id: number;
+  name: string;
+  score: number;
+  date: string;
+}
+
+export interface LeaderboardRanks {
+  daily: number;
+  weekly: number;
+  alltime: number;
+}
+
+export interface LeaderboardState {
+  entries: LeaderboardEntry[];
+  period: LeaderboardPeriod;
+  loading: boolean;
+}
+
 // ── Full Game State Snapshot ─────────────────────────────
 // The Model owns this. The View receives a readonly copy.
 
@@ -123,6 +147,8 @@ export interface GameState {
   elapsedTime: number; // seconds since play started (for difficulty)
   groundY: number; // y-position of the ground line
   multi: MultiplayerState | null; // null in solo mode
+  leaderboard: LeaderboardState;
+  lastRank: LeaderboardRanks | null; // set after score submission, cleared on menu
 }
 
 // ── Config (loaded from CSV) ─────────────────────────────

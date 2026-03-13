@@ -20,12 +20,24 @@ import {
   MULTI_BUTTON_Y_FRAC,
   MULTI_BUTTON_W,
   MULTI_BUTTON_H,
+  LB_BUTTON_Y_FRAC,
+  LB_BUTTON_W,
+  LB_BUTTON_H,
   COPY_LINK_BUTTON_Y_FRAC,
   COPY_LINK_BUTTON_W,
   COPY_LINK_BUTTON_H,
+  LB_TAB_Y_FRAC,
+  LB_TAB_W,
+  LB_TAB_H,
+  LB_TAB_GAP,
+  LB_TABS,
 } from "./GameView";
-import { GameConfig, GamePhase } from "./types";
+import { GameConfig, GamePhase, LeaderboardPeriod } from "./types";
 import { NetworkClient } from "./networkClient";
+import {
+  fetchScores,
+  submitScore,
+} from "./leaderboardClient";
 
 const MAX_DT = 0.05; // cap at 50ms to prevent physics explosion
 const RESTART_DELAY_MS = 500; // debounce after death before allowing restart
@@ -54,14 +66,21 @@ export interface MultiplayerSetup {
   startedAt?: number;
 }
 
+const NAME_KEY = "floppycat_name";
+
 export class GameController {
   private model: GameModel;
   private view: GameView;
   private canvas: HTMLCanvasElement;
   private config: GameConfig;
+  private apiUrl: string;
   private animFrameId: number | null = null;
   private lastTimestamp = 0;
   private gameOverTime = 0;
+
+  // Leaderboard
+  private scoreSubmitted = false;
+  private pendingScore: number | null = null;
 
   // Multiplayer
   private netClient: NetworkClient | null = null;
@@ -72,14 +91,16 @@ export class GameController {
 
   // Callbacks to React layer
   onRequestMultiSetup: (() => void) | null = null;
+  onRequestNameEntry: (() => void) | null = null;
 
   // Bound event handlers (stored for cleanup)
   private onPointerDown: (e: PointerEvent) => void;
   private onKeyDown: (e: KeyboardEvent) => void;
 
-  constructor(canvas: HTMLCanvasElement, config: GameConfig) {
+  constructor(canvas: HTMLCanvasElement, config: GameConfig, apiUrl: string) {
     this.canvas = canvas;
     this.config = config;
+    this.apiUrl = apiUrl;
 
     const { width, height } = this.sizeCanvas();
 
@@ -169,13 +190,26 @@ export class GameController {
       this.model.update(dt);
     }
 
-    // Record game over time for debounce
+    // Record game over time for debounce + submit score
     if (
       (state.phase === GamePhase.GameOver ||
         state.phase === GamePhase.MultiResult) &&
       this.gameOverTime === 0
     ) {
       this.gameOverTime = timestamp;
+    }
+
+    // Submit score to leaderboard on solo game over
+    if (state.phase === GamePhase.GameOver && !this.scoreSubmitted) {
+      this.scoreSubmitted = true;
+      const name = localStorage.getItem(NAME_KEY)?.trim();
+      if (name) {
+        this.submitCurrentScore(state.score, name);
+      } else {
+        // No name saved — ask React to show name entry
+        this.pendingScore = state.score;
+        this.onRequestNameEntry?.();
+      }
     }
 
     // Ghost cat interpolation
@@ -231,10 +265,23 @@ export class GameController {
       case GamePhase.Menu:
         if (this.isMultiButtonHit(pos, state)) {
           this.onRequestMultiSetup?.();
+        } else if (this.isLbButtonHit(pos, state)) {
+          this.openLeaderboard();
         } else {
           this.model.startGame();
+          this.scoreSubmitted = false;
         }
         break;
+
+      case GamePhase.Leaderboard: {
+        const tabHit = this.getTabHit(pos, state);
+        if (tabHit) {
+          this.switchLeaderboardTab(tabHit);
+        } else {
+          this.model.hideLeaderboard();
+        }
+        break;
+      }
 
       case GamePhase.Playing:
         this.model.jump();
@@ -243,6 +290,7 @@ export class GameController {
       case GamePhase.GameOver:
         if (this.isDebouncing()) return;
         this.gameOverTime = 0;
+        this.scoreSubmitted = false;
         this.model.returnToMenu();
         break;
 
@@ -397,6 +445,43 @@ export class GameController {
     );
   }
 
+  private isLbButtonHit(
+    pos: { x: number; y: number },
+    state: Readonly<ReturnType<GameModel["getState"]>>
+  ): boolean {
+    const cx = state.canvasWidth / 2;
+    const cy = state.canvasHeight * LB_BUTTON_Y_FRAC;
+    return (
+      pos.x >= cx - LB_BUTTON_W / 2 &&
+      pos.x <= cx + LB_BUTTON_W / 2 &&
+      pos.y >= cy - LB_BUTTON_H / 2 &&
+      pos.y <= cy + LB_BUTTON_H / 2
+    );
+  }
+
+  private getTabHit(
+    pos: { x: number; y: number },
+    state: Readonly<ReturnType<GameModel["getState"]>>
+  ): LeaderboardPeriod | null {
+    const cx = state.canvasWidth / 2;
+    const tabY = state.canvasHeight * LB_TAB_Y_FRAC;
+    const totalTabW = LB_TABS.length * LB_TAB_W + (LB_TABS.length - 1) * LB_TAB_GAP;
+    const tabStartX = cx - totalTabW / 2;
+
+    for (let i = 0; i < LB_TABS.length; i++) {
+      const tabCx = tabStartX + i * (LB_TAB_W + LB_TAB_GAP) + LB_TAB_W / 2;
+      if (
+        pos.x >= tabCx - LB_TAB_W / 2 &&
+        pos.x <= tabCx + LB_TAB_W / 2 &&
+        pos.y >= tabY - LB_TAB_H / 2 &&
+        pos.y <= tabY + LB_TAB_H / 2
+      ) {
+        return LB_TABS[i];
+      }
+    }
+    return null;
+  }
+
   private isStartButtonHit(
     pos: { x: number; y: number },
     state: Readonly<ReturnType<GameModel["getState"]>>
@@ -455,6 +540,54 @@ export class GameController {
       await navigator.clipboard.writeText(url);
     } catch {
       // Clipboard API not available
+    }
+  }
+
+  // ── Leaderboard ────────────────────────────────────────────
+
+  private openLeaderboard(period: LeaderboardPeriod = "daily"): void {
+    this.model.showLeaderboard(period);
+    this.fetchLeaderboard(period);
+  }
+
+  private switchLeaderboardTab(period: LeaderboardPeriod): void {
+    const current = this.model.getState().leaderboard.period;
+    if (period === current) return;
+    this.model.setLeaderboardPeriod(period);
+    this.fetchLeaderboard(period);
+  }
+
+  private async fetchLeaderboard(period: LeaderboardPeriod): Promise<void> {
+    try {
+      const entries = await fetchScores(this.apiUrl, period);
+      // Only apply if we're still on the leaderboard screen with the same period
+      const state = this.model.getState();
+      if (state.phase === GamePhase.Leaderboard && state.leaderboard.period === period) {
+        this.model.setLeaderboardEntries(entries);
+      }
+    } catch {
+      this.model.setLeaderboardLoading(false);
+    }
+  }
+
+  /** Called by React layer after user enters their name on game over. */
+  completeNameEntry(): void {
+    const name = localStorage.getItem(NAME_KEY)?.trim();
+    if (!name || this.pendingScore == null) return;
+    this.submitCurrentScore(this.pendingScore, name);
+    this.pendingScore = null;
+  }
+
+  private async submitCurrentScore(score: number, name: string): Promise<void> {
+    if (score <= 0) return;
+    try {
+      const result = await submitScore(this.apiUrl, name, score);
+      // Only apply if still on game over screen
+      if (this.model.getState().phase === GamePhase.GameOver) {
+        this.model.setLastRank(result.rank);
+      }
+    } catch {
+      // Leaderboard submission is best-effort
     }
   }
 

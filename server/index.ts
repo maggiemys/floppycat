@@ -1,9 +1,86 @@
+import { createServer, IncomingMessage, ServerResponse } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { RoomManager } from "./rooms.js";
+import { getScores, insertScore, checkRateLimit } from "./leaderboard.js";
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
 const rooms = new RoomManager();
-const wss = new WebSocketServer({ port: PORT });
+
+// ── HTTP server (leaderboard API + WebSocket upgrade) ────────
+
+const httpServer = createServer(handleHttp);
+const wss = new WebSocketServer({ server: httpServer });
+
+function handleHttp(req: IncomingMessage, res: ServerResponse): void {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
+
+  if (url.pathname === "/api/scores" && req.method === "GET") {
+    const period = url.searchParams.get("period") ?? "alltime";
+    if (!["daily", "weekly", "alltime"].includes(period)) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Invalid period" }));
+      return;
+    }
+    const scores = getScores(period);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ scores }));
+    return;
+  }
+
+  if (url.pathname === "/api/scores" && req.method === "POST") {
+    let body = "";
+    req.on("data", (chunk: Buffer) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      try {
+        const data = JSON.parse(body);
+        const name = String(data.name ?? "").trim().slice(0, 16);
+        const score = parseInt(data.score, 10);
+
+        if (!name || isNaN(score) || score < 0 || score > 999) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid name or score" }));
+          return;
+        }
+
+        const ip =
+          (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ??
+          req.socket.remoteAddress ??
+          "unknown";
+
+        if (!checkRateLimit(ip)) {
+          res.writeHead(429, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Too many requests" }));
+          return;
+        }
+
+        const result = insertScore(name, score, ip);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON" }));
+      }
+    });
+    return;
+  }
+
+  res.writeHead(404, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: "Not found" }));
+}
+
+// ── WebSocket handling (multiplayer) ─────────────────────────
 
 function send(ws: WebSocket, data: object): void {
   if (ws.readyState === WebSocket.OPEN) {
@@ -156,4 +233,6 @@ wss.on("connection", (ws) => {
   });
 });
 
-console.log(`FloppyCat multiplayer server listening on port ${PORT}`);
+httpServer.listen(PORT, () => {
+  console.log(`FloppyCat server listening on port ${PORT}`);
+});

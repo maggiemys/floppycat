@@ -26,6 +26,9 @@ import {
   MultiplayerState,
   OpponentState,
   PlayerInfo,
+  LeaderboardEntry,
+  LeaderboardPeriod,
+  LeaderboardRanks,
 } from "./types";
 import { mulberry32 } from "./rng";
 
@@ -57,6 +60,8 @@ export class GameModel {
       elapsedTime: 0,
       groundY,
       multi: null,
+      leaderboard: { entries: [], period: "daily", loading: false },
+      lastRank: null,
     };
   }
 
@@ -101,6 +106,39 @@ export class GameModel {
     this.state.obstacles = [];
     this.state.particles = [];
     this.state.multi = null;
+    this.state.lastRank = null;
+  }
+
+  // ── State Transitions (Leaderboard) ────────────────────────
+
+  showLeaderboard(period: LeaderboardPeriod = "daily"): void {
+    this.state.phase = GamePhase.Leaderboard;
+    this.state.leaderboard.period = period;
+    this.state.leaderboard.loading = true;
+    this.state.leaderboard.entries = [];
+  }
+
+  hideLeaderboard(): void {
+    this.state.phase = GamePhase.Menu;
+  }
+
+  setLeaderboardPeriod(period: LeaderboardPeriod): void {
+    this.state.leaderboard.period = period;
+    this.state.leaderboard.loading = true;
+    this.state.leaderboard.entries = [];
+  }
+
+  setLeaderboardEntries(entries: LeaderboardEntry[]): void {
+    this.state.leaderboard.entries = entries;
+    this.state.leaderboard.loading = false;
+  }
+
+  setLeaderboardLoading(loading: boolean): void {
+    this.state.leaderboard.loading = loading;
+  }
+
+  setLastRank(rank: LeaderboardRanks): void {
+    this.state.lastRank = rank;
   }
 
   // ── State Transitions (Multiplayer) ─────────────────────

@@ -23,16 +23,28 @@ import {
   CatColorPalette,
   CAT_COLORS,
   OpponentState,
+  LeaderboardPeriod,
 } from "./types";
 
 // Layout constants for hit-testable buttons (shared with Controller)
-export const MULTI_BUTTON_Y_FRAC = 0.82;
+export const MULTI_BUTTON_Y_FRAC = 0.84;
 export const MULTI_BUTTON_W = 170;
 export const MULTI_BUTTON_H = 38;
+
+export const LB_BUTTON_Y_FRAC = 0.75;
+export const LB_BUTTON_W = 170;
+export const LB_BUTTON_H = 38;
 
 export const COPY_LINK_BUTTON_Y_FRAC = 0.32;
 export const COPY_LINK_BUTTON_W = 130;
 export const COPY_LINK_BUTTON_H = 30;
+
+// Leaderboard tab layout
+export const LB_TAB_Y_FRAC = 0.14;
+export const LB_TAB_W = 90;
+export const LB_TAB_H = 30;
+export const LB_TAB_GAP = 8;
+export const LB_TABS: LeaderboardPeriod[] = ["daily", "weekly", "alltime"];
 
 export class GameView {
   private ctx: CanvasRenderingContext2D;
@@ -82,6 +94,12 @@ export class GameView {
         this.drawCatFromState(state, true);
         this.drawScore(state);
         this.drawGameOver(state);
+        break;
+
+      case GamePhase.Leaderboard:
+        this.drawBackground(state);
+        this.drawGround(state);
+        this.drawLeaderboardScreen(state);
         break;
 
       case GamePhase.MultiLobby:
@@ -547,9 +565,20 @@ export class GameView {
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillStyle = "#666";
-      ctx.fillText(`Best: ${highScore}`, cx, h * 0.7);
+      ctx.fillText(`Best: ${highScore}`, cx, h * 0.67);
       ctx.restore();
     }
+
+    // "Leaderboard" button
+    this.drawButton(
+      cx,
+      h * LB_BUTTON_Y_FRAC,
+      LB_BUTTON_W,
+      LB_BUTTON_H,
+      "Leaderboard",
+      "#5B8C5A",
+      "white"
+    );
 
     // "Multiplayer" button
     this.drawButton(
@@ -597,11 +626,154 @@ export class GameView {
       h * 0.52
     );
 
+    // Global rank
+    if (state.lastRank) {
+      const { daily, weekly, alltime } = state.lastRank;
+      // Show the most impressive rank
+      let label: string;
+      if (daily <= weekly && daily <= alltime) {
+        label = `#${daily} Today`;
+      } else if (weekly <= alltime) {
+        label = `#${weekly} This Week`;
+      } else {
+        label = `#${alltime} All Time`;
+      }
+      ctx.font = "600 16px system-ui";
+      ctx.fillStyle = "#FFD700";
+      ctx.fillText(label, cx, h * 0.58);
+    }
+
     const pulse = 0.5 + 0.5 * Math.sin(this.frameCount * 0.06);
     ctx.globalAlpha = pulse;
     ctx.font = "600 18px system-ui";
     ctx.fillStyle = "white";
-    ctx.fillText("Tap to Restart", cx, h * 0.65);
+    ctx.fillText("Tap to Restart", cx, h * 0.68);
+
+    ctx.restore();
+  }
+
+  // ── Leaderboard Screen ──────────────────────────────────
+
+  private drawLeaderboardScreen(state: Readonly<GameState>): void {
+    const { ctx } = this;
+    const { canvasWidth: w, canvasHeight: h, leaderboard } = state;
+    const cx = w / 2;
+
+    // Semi-dark overlay
+    ctx.save();
+    ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+    ctx.fillRect(0, 0, w, h);
+
+    // Title
+    ctx.font = "bold 30px system-ui";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.4)";
+    ctx.lineWidth = 3;
+    ctx.lineJoin = "round";
+    ctx.strokeText("Leaderboard", cx, h * 0.07);
+    ctx.fillStyle = "white";
+    ctx.fillText("Leaderboard", cx, h * 0.07);
+
+    // Tab buttons
+    const tabY = h * LB_TAB_Y_FRAC;
+    const totalTabW = LB_TABS.length * LB_TAB_W + (LB_TABS.length - 1) * LB_TAB_GAP;
+    const tabStartX = cx - totalTabW / 2;
+
+    for (let i = 0; i < LB_TABS.length; i++) {
+      const period = LB_TABS[i];
+      const tabX = tabStartX + i * (LB_TAB_W + LB_TAB_GAP) + LB_TAB_W / 2;
+      const isActive = leaderboard.period === period;
+      const label = period === "alltime" ? "All Time" : period.charAt(0).toUpperCase() + period.slice(1);
+
+      if (isActive) {
+        this.drawButton(tabX, tabY, LB_TAB_W, LB_TAB_H, label, "#5B8C5A", "white");
+      } else {
+        // Outline style for inactive tabs
+        ctx.beginPath();
+        this.roundRect(tabX - LB_TAB_W / 2, tabY - LB_TAB_H / 2, LB_TAB_W, LB_TAB_H, 6);
+        ctx.strokeStyle = "rgba(255,255,255,0.4)";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        ctx.font = "500 13px system-ui";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "rgba(255,255,255,0.6)";
+        ctx.fillText(label, tabX, tabY);
+      }
+    }
+
+    // Loading state
+    if (leaderboard.loading) {
+      ctx.font = "500 16px system-ui";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(255,255,255,0.6)";
+      const dots = ".".repeat((Math.floor(this.frameCount / 30) % 3) + 1);
+      ctx.fillText(`Loading${dots}`, cx, h * 0.45);
+      ctx.restore();
+      return;
+    }
+
+    // Empty state
+    if (leaderboard.entries.length === 0) {
+      ctx.font = "500 16px system-ui";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(255,255,255,0.5)";
+      ctx.fillText("No scores yet", cx, h * 0.45);
+
+      // Back prompt
+      const pulse = 0.5 + 0.5 * Math.sin(this.frameCount * 0.06);
+      ctx.globalAlpha = pulse;
+      ctx.font = "500 14px system-ui";
+      ctx.fillStyle = "rgba(255,255,255,0.7)";
+      ctx.fillText("Tap to close", cx, h * 0.92);
+      ctx.restore();
+      return;
+    }
+
+    // Score rows
+    const startY = h * 0.22;
+    const rowHeight = 28;
+    const maxVisible = Math.min(leaderboard.entries.length, Math.floor((h * 0.65) / rowHeight));
+
+    for (let i = 0; i < maxVisible; i++) {
+      const entry = leaderboard.entries[i];
+      const y = startY + i * rowHeight;
+
+      // Rank number
+      ctx.font = "bold 14px system-ui";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = i === 0 ? "#FFD700" : i === 1 ? "#C0C0C0" : i === 2 ? "#CD7F32" : "rgba(255,255,255,0.6)";
+      ctx.fillText(`#${i + 1}`, cx - 80, y);
+
+      // Crown for #1
+      if (i === 0) {
+        this.drawCrown(cx - 98, y);
+      }
+
+      // Name
+      ctx.font = "500 14px system-ui";
+      ctx.textAlign = "left";
+      ctx.fillStyle = i < 3 ? "white" : "rgba(255,255,255,0.7)";
+      ctx.fillText(entry.name, cx - 68, y);
+
+      // Score
+      ctx.textAlign = "right";
+      ctx.fillText(String(entry.score), cx + 95, y);
+    }
+
+    // Back prompt
+    const pulse = 0.5 + 0.5 * Math.sin(this.frameCount * 0.06);
+    ctx.globalAlpha = pulse;
+    ctx.font = "500 14px system-ui";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "rgba(255,255,255,0.7)";
+    ctx.fillText("Tap to close", cx, h * 0.92);
 
     ctx.restore();
   }

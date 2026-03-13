@@ -7,6 +7,9 @@ import { MultiplayerSetup } from "@/engine/GameController";
 
 const DEFAULT_WS_URL = "wss://floppycat.onrender.com";
 const WS_URL = import.meta.env.VITE_WS_URL ?? DEFAULT_WS_URL;
+const API_URL =
+  import.meta.env.VITE_API_URL ??
+  WS_URL.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
 const NAME_KEY = "floppycat_name";
 
 /** Parse the flat config map from CSV into a typed GameConfig. */
@@ -48,6 +51,8 @@ export default function App() {
   const [playerName, setPlayerName] = useState(() => localStorage.getItem(NAME_KEY) ?? "");
   const [roomCode, setRoomCode] = useState("");
   const [setupError, setSetupError] = useState("");
+  const [showNameEntry, setShowNameEntry] = useState(false);
+  const [nameEntryDone, setNameEntryDone] = useState(0);
 
   useEffect(() => {
     loadConfig().then((map) => setGameConfig(parseGameConfig(map)));
@@ -127,6 +132,18 @@ export default function App() {
     setShowSetup(true);
     setSetupStep(playerName.trim() ? "choice" : "name");
   }, [playerName]);
+
+  const handleRequestNameEntry = useCallback(() => {
+    setShowNameEntry(true);
+  }, []);
+
+  const handleNameForScore = () => {
+    const name = playerName.trim();
+    if (!name) return;
+    localStorage.setItem(NAME_KEY, name);
+    setShowNameEntry(false);
+    setNameEntryDone((n) => n + 1);
+  };
 
   const handleNameSubmit = () => {
     const name = playerName.trim();
@@ -239,9 +256,55 @@ export default function App() {
       <div className="game-screen">
         <GameCanvas
           config={gameConfig}
+          apiUrl={API_URL}
           multiSetup={multiSetup}
+          nameEntryDone={nameEntryDone}
           onRequestMultiSetup={handleRequestMultiSetup}
+          onRequestNameEntry={handleRequestNameEntry}
         />
+
+        {/* Name entry overlay (game over, first time) */}
+        {showNameEntry && (
+          <div
+            className="app-screen flex items-center justify-center"
+            style={{ background: "rgba(0,0,0,0.6)", zIndex: 10 }}
+          >
+            <div className="ui-panel" style={{ width: 300, maxWidth: "90%" }}>
+              <div className="flex flex-col gap-3">
+                <h2 className="ink-strong text-center text-lg font-bold">
+                  Enter Your Name
+                </h2>
+                <p className="ink-soft text-center text-sm">
+                  Save your score to the leaderboard
+                </p>
+                <input
+                  type="text"
+                  value={playerName}
+                  onChange={(e) => setPlayerName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleNameForScore()}
+                  placeholder="Your name"
+                  maxLength={16}
+                  className="rounded-lg border px-3 py-2 text-center text-lg"
+                  style={{
+                    borderColor: "var(--border)",
+                    background: "white",
+                    color: "var(--text)",
+                  }}
+                  autoFocus
+                />
+                <button className="ui-cta" onClick={handleNameForScore}>
+                  Save Score
+                </button>
+                <button
+                  className="ui-button"
+                  onClick={() => setShowNameEntry(false)}
+                >
+                  Skip
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Multiplayer setup overlay */}
         {showSetup && (

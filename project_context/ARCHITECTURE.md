@@ -18,20 +18,29 @@ The game uses a strict Model-View-Controller architecture in `app/src/engine/`:
 - `app/src/engine/GameView.ts`: **View** — canvas renderer. Receives `Readonly<GameState>` and draws everything (including multiplayer lobby, countdown, ghost cats with per-player colors, leaderboard, spectating overlay, results with crown). Zero mutation of game state.
 - `app/src/engine/GameController.ts`: **Controller** — game loop (rAF), input handling, DPR canvas setup, multiplayer WebSocket orchestration with ghost interpolation. The only piece that talks to both Model and View.
 - `app/src/engine/networkClient.ts`: WebSocket client for multiplayer relay server — connect, send/receive messages, room lifecycle.
+- `app/src/engine/leaderboardClient.ts`: HTTP client for global leaderboard API — fetch scores by period, submit scores.
 - `app/src/engine/rng.ts`: Seeded PRNG (mulberry32) for deterministic obstacle patterns in multiplayer.
 - `app/src/components/GameCanvas.tsx`: React bridge — owns the `<canvas>` element, manages Controller lifecycle via useEffect.
 
 ## Multiplayer Server
 
-- `server/index.ts`: WebSocket relay server entry point. Routes messages between players, handles room creation/joining, fan-out state to N-1 players, tracks deaths for all-finished detection.
+- `server/index.ts`: Combined HTTP + WebSocket server. HTTP handles leaderboard API (`/api/scores`). WebSocket handles multiplayer relay (room creation/joining, fan-out state, all-finished detection).
 - `server/rooms.ts`: Room creation, join (including mid-race), host-starts-game, cleanup lifecycle. Supports 2-10 players per room.
+- `server/leaderboard.ts`: SQLite-backed global leaderboard. Stores scores with timestamps, supports daily/weekly/all-time queries, includes rate limiting.
 
 ## Data flow
 
 - CSVs in `data/` are loaded at runtime via `loadData.ts` (Vite `publicDir` points to `../data`). See DATA.md for CSV schemas.
-- `App.tsx` loads `config.csv`, parses it into a typed `GameConfig`, and passes it to `GameCanvas`. It also manages the multiplayer setup flow (name entry, create/join room) and `?room=` URL params.
+- `App.tsx` loads `config.csv`, parses it into a typed `GameConfig`, and passes it to `GameCanvas`. It also derives the API URL from the WebSocket URL and manages the multiplayer setup flow (name entry, create/join room) and `?room=` URL params.
 - The Controller creates the Model and View, runs the game loop, and handles input.
 - High score is persisted to `localStorage`. Player name is persisted to `localStorage`.
+
+### Leaderboard data flow
+
+- Player taps "Leaderboard" on menu → Controller fetches `GET /api/scores?period=daily` → Model stores entries → View renders ranked list.
+- Tab buttons (Daily / Weekly / All Time) switch the period and re-fetch.
+- On solo game over: Controller POSTs score to `/api/scores` → server returns ranks for all three periods → Model stores rank → View shows best rank on game over screen (e.g. "#2 Today").
+- Server stores scores in SQLite (`leaderboard.db`), rate-limits submissions to 1 per 5s per IP.
 
 ### Multiplayer data flow
 
@@ -52,3 +61,5 @@ The game uses a strict Model-View-Controller architecture in `app/src/engine/`:
 - Tuning values: `data/config.csv` or new CSV files (document in DATA.md)
 - Multiplayer server logic: `server/rooms.ts` (room management), `server/index.ts` (message routing)
 - Multiplayer client networking: `app/src/engine/networkClient.ts`
+- Leaderboard server: `server/leaderboard.ts` (SQLite queries), `server/index.ts` (HTTP routes)
+- Leaderboard client: `app/src/engine/leaderboardClient.ts`
