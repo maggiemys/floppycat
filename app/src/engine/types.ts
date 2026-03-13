@@ -8,13 +8,16 @@
 // ── Game States ──────────────────────────────────────────
 
 export enum GamePhase {
+  // Solo
   Menu = "menu",
   Playing = "playing",
   GameOver = "gameover",
-  PvpLobby = "pvp_lobby",
-  PvpCountdown = "pvp_countdown",
-  PvpPlaying = "pvp_playing",
-  PvpResult = "pvp_result",
+  // Multiplayer (covers 2-10 players, replaces old PVP phases)
+  MultiLobby = "multi_lobby",
+  MultiCountdown = "multi_countdown",
+  MultiPlaying = "multi_playing",
+  MultiSpectating = "multi_spectating",
+  MultiResult = "multi_result",
 }
 
 // ── Cat (Player) ─────────────────────────────────────────
@@ -50,27 +53,57 @@ export interface Particle {
   color: string;
 }
 
-// ── PVP State ───────────────────────────────────────────
+// ── Cat Colors ───────────────────────────────────────────
 
-export interface PvpInfo {
-  roomId: string; // '' while connecting
-  playerIndex: number; // 0 = host, 1 = joiner
-  opponentConnected: boolean;
-  selfReady: boolean;
-  opponentReady: boolean;
+export interface CatColorPalette {
+  body: string;
+  accent: string;
+  paw: string;
+  name: string;
+}
+
+export const CAT_COLORS: CatColorPalette[] = [
+  { body: "#F4A460", accent: "#E8941A", paw: "#F4C77D", name: "Orange" },
+  { body: "#A8A8A8", accent: "#787878", paw: "#C0C0C0", name: "Gray" },
+  { body: "#4A4A4A", accent: "#2A2A2A", paw: "#666666", name: "Black" },
+  { body: "#F0F0F0", accent: "#C8C8C8", paw: "#FFFFFF", name: "White" },
+  { body: "#E8C08A", accent: "#CC8844", paw: "#F0D8B0", name: "Calico" },
+  { body: "#D4C5A9", accent: "#8B7355", paw: "#E0D5C0", name: "Siamese" },
+  { body: "#E07830", accent: "#C05010", paw: "#F09050", name: "Ginger" },
+  { body: "#8898B0", accent: "#607090", paw: "#A0B0C8", name: "Russian Blue" },
+  { body: "#3A3A3A", accent: "#1A1A1A", paw: "#555555", name: "Tuxedo" },
+  { body: "#B8956A", accent: "#8B7040", paw: "#D0B088", name: "Tabby" },
+];
+
+// ── Multiplayer State ────────────────────────────────────
+
+export interface OpponentState {
+  playerIndex: number;
+  name: string;
+  y: number;
+  displayY: number; // interpolated Y for smooth ghost rendering
+  score: number;
+  alive: boolean;
+  lastUpdateTime: number;
+}
+
+export interface PlayerInfo {
+  index: number;
+  name: string;
+  connected: boolean;
+}
+
+export interface MultiplayerState {
+  playerIndex: number;
+  playerName: string;
+  roomId: string;
+  isHost: boolean;
+  players: PlayerInfo[];
+  opponents: OpponentState[];
+  countdown: number; // seconds remaining during countdown
+  seed: number;
   selfAlive: boolean;
-  countdown: number; // PvpCountdown seconds remaining
-  opponent: {
-    y: number; // raw Y from server
-    score: number;
-    alive: boolean;
-  };
-  opponentDisplayY: number; // interpolated Y for smooth ghost rendering
-  result: "pending" | "win" | "lose";
-  tiebreaker: number; // which playerIndex wins on tie
-  firstDeathTime: number; // elapsed time of first death, 0 = none
-  selfRematch: boolean;
-  opponentRematch: boolean;
+  deathOrder: { playerIndex: number; score: number }[];
   error: string | null;
 }
 
@@ -89,7 +122,7 @@ export interface GameState {
   canvasHeight: number;
   elapsedTime: number; // seconds since play started (for difficulty)
   groundY: number; // y-position of the ground line
-  pvp: PvpInfo | null; // null in solo mode
+  multi: MultiplayerState | null; // null in solo mode
 }
 
 // ── Config (loaded from CSV) ─────────────────────────────
@@ -111,6 +144,7 @@ export interface GameConfig {
   groundHeight: number; // px from bottom
   maxVelocity: number; // terminal velocity cap px/s
   rotationFactor: number; // how much velocity affects tilt
-  pvpResultTimeout: number; // seconds to wait after first death before ending race
-  pvpCountdownSeconds: number; // countdown duration before race starts
+  countdownSeconds: number; // countdown before multiplayer race
+  multiMaxPlayers: number; // max players per room (2-10)
+  multiLastAliveTimeout: number; // seconds after second-to-last death
 }

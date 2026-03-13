@@ -23,8 +23,9 @@ All CSVs live in `data/` and are loaded at runtime. Values are read as strings a
   - `ground_height,60` — ground strip height from bottom (px)
   - `max_velocity,600` — terminal falling speed (px/s)
   - `rotation_factor,0.002` — how velocity maps to visual tilt
-  - `pvp_result_timeout,10` — seconds to wait after first death before ending PVP race
-  - `pvp_countdown_seconds,3` — countdown duration before PVP race starts
+  - `countdown_seconds,3` — countdown duration before multiplayer race starts
+  - `multi_max_players,10` — maximum players per multiplayer room (2-10)
+  - `multi_last_alive_timeout,10` — seconds to wait after second-to-last death before ending race
 
 ## Validation rules
 

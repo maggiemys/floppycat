@@ -4,25 +4,19 @@
  * This component owns the <canvas> DOM element and manages the
  * GameController lifecycle. It is the ONLY point of contact
  * between React and the imperative canvas game engine.
- *
- * Responsibilities:
- *   - Mount/unmount the Controller with React's lifecycle
- *   - Keep the canvas sized correctly via ResizeObserver
- *   - Pass the data-driven GameConfig to the engine
- *   - Pass PVP connection info (wsUrl, room ID) when applicable
  */
 
 import { useRef, useEffect } from "react";
-import { GameController } from "@/engine/GameController";
+import { GameController, MultiplayerSetup } from "@/engine/GameController";
 import { GameConfig } from "@/engine/types";
 
 interface GameCanvasProps {
   config: GameConfig;
-  wsUrl: string;
-  pvpRoomId: string | null;
+  multiSetup: MultiplayerSetup | null;
+  onRequestMultiSetup: () => void;
 }
 
-export default function GameCanvas({ config, wsUrl, pvpRoomId }: GameCanvasProps) {
+export default function GameCanvas({ config, multiSetup, onRequestMultiSetup }: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const controllerRef = useRef<GameController | null>(null);
 
@@ -31,15 +25,30 @@ export default function GameCanvas({ config, wsUrl, pvpRoomId }: GameCanvasProps
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const controller = new GameController(canvas, config, wsUrl, pvpRoomId);
+    const controller = new GameController(canvas, config);
     controllerRef.current = controller;
+    controller.onRequestMultiSetup = onRequestMultiSetup;
     controller.start();
 
     return () => {
       controller.destroy();
       controllerRef.current = null;
     };
-  }, [config, wsUrl, pvpRoomId]);
+  }, [config]);
+
+  // Update callback ref when it changes
+  useEffect(() => {
+    if (controllerRef.current) {
+      controllerRef.current.onRequestMultiSetup = onRequestMultiSetup;
+    }
+  }, [onRequestMultiSetup]);
+
+  // When multiplayer setup completes, tell the Controller
+  useEffect(() => {
+    if (multiSetup && controllerRef.current) {
+      controllerRef.current.startMultiplayer(multiSetup);
+    }
+  }, [multiSetup]);
 
   // Keep canvas sized correctly via ResizeObserver
   useEffect(() => {

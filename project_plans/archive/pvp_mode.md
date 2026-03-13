@@ -1,6 +1,6 @@
 # PVP Race Mode
 
-Status: Active
+Status: Archived — superseded by `multiplayer_mode.md`
 Last updated: 2026-03-12
 
 ## Problem

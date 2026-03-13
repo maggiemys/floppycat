@@ -9,7 +9,7 @@
  *   - Gravity and jump physics
  *   - Difficulty scaling over time
  *   - Game phase transitions (Menu -> Playing -> GameOver)
- *   - PVP state (lobby, countdown, race, results)
+ *   - Multiplayer state (lobby, countdown, race, spectating, results)
  *
  * The Model has ZERO knowledge of rendering or input.
  * It exposes a readonly state snapshot that the View reads,
@@ -23,7 +23,9 @@ import {
   CatState,
   Obstacle,
   Particle,
-  PvpInfo,
+  MultiplayerState,
+  OpponentState,
+  PlayerInfo,
 } from "./types";
 import { mulberry32 } from "./rng";
 
@@ -54,7 +56,7 @@ export class GameModel {
       canvasHeight,
       elapsedTime: 0,
       groundY,
-      pvp: null,
+      multi: null,
     };
   }
 
@@ -92,76 +94,78 @@ export class GameModel {
     }
   }
 
-  /** GameOver -> Menu. */
+  /** GameOver / MultiResult -> Menu. */
   returnToMenu(): void {
     this.state.phase = GamePhase.Menu;
     this.state.cat = this.createCat(this.state.canvasWidth, this.state.groundY);
     this.state.obstacles = [];
     this.state.particles = [];
-    this.state.pvp = null;
+    this.state.multi = null;
   }
 
-  // ── State Transitions (PVP) ──────────────────────────────
+  // ── State Transitions (Multiplayer) ─────────────────────
 
-  /** Enter PVP lobby. */
-  initPvp(
-    roomId: string,
-    playerIndex: number,
-    opponentConnected: boolean
-  ): void {
-    this.state.phase = GamePhase.PvpLobby;
-    this.state.pvp = {
-      roomId,
+  /** Enter multiplayer lobby. */
+  initMulti(roomId: string, playerIndex: number, playerName: string, isHost: boolean): void {
+    this.state.phase = GamePhase.MultiLobby;
+    this.state.multi = {
       playerIndex,
-      opponentConnected,
-      selfReady: false,
-      opponentReady: false,
-      selfAlive: true,
+      playerName,
+      roomId,
+      isHost,
+      players: [{ index: playerIndex, name: playerName, connected: true }],
+      opponents: [],
       countdown: 0,
-      opponent: { y: 0, score: 0, alive: true },
-      opponentDisplayY: 0,
-      result: "pending",
-      tiebreaker: 0,
-      firstDeathTime: 0,
-      selfRematch: false,
-      opponentRematch: false,
+      seed: 0,
+      selfAlive: true,
+      deathOrder: [],
       error: null,
     };
   }
 
-  setPvpRoomId(roomId: string): void {
-    if (this.state.pvp) this.state.pvp.roomId = roomId;
+  setMultiRoomId(roomId: string): void {
+    if (this.state.multi) this.state.multi.roomId = roomId;
   }
 
-  setOpponentConnected(): void {
-    if (this.state.pvp) this.state.pvp.opponentConnected = true;
+  setMultiError(message: string): void {
+    if (this.state.multi) this.state.multi.error = message;
   }
 
-  setSelfReady(): void {
-    if (this.state.pvp) this.state.pvp.selfReady = true;
+  addPlayer(playerIndex: number, name: string): void {
+    const multi = this.state.multi;
+    if (!multi) return;
+    // Avoid duplicates
+    if (!multi.players.find((p) => p.index === playerIndex)) {
+      multi.players.push({ index: playerIndex, name, connected: true });
+    }
   }
 
-  setOpponentReady(): void {
-    if (this.state.pvp) this.state.pvp.opponentReady = true;
+  removePlayer(playerIndex: number): void {
+    const multi = this.state.multi;
+    if (!multi) return;
+    const player = multi.players.find((p) => p.index === playerIndex);
+    if (player) player.connected = false;
+    // Also mark opponent as dead if they were alive
+    const opp = multi.opponents.find((o) => o.playerIndex === playerIndex);
+    if (opp) opp.alive = false;
   }
 
-  setPvpError(message: string): void {
-    if (this.state.pvp) this.state.pvp.error = message;
-  }
-
-  /** Both players ready — start countdown. */
-  startCountdown(seed: number, tiebreaker: number): void {
-    if (!this.state.pvp) return;
-    this.state.pvp.countdown = this.config.pvpCountdownSeconds;
-    this.state.pvp.tiebreaker = tiebreaker;
-    this.state.phase = GamePhase.PvpCountdown;
+  /** Start countdown. */
+  startCountdown(seed: number): void {
+    if (!this.state.multi) return;
+    this.state.multi.countdown = this.config.countdownSeconds;
+    this.state.multi.seed = seed;
+    this.state.phase = GamePhase.MultiCountdown;
     this.rng = mulberry32(seed);
   }
 
   /** Countdown finished — start the race. */
-  startPvpGame(): void {
+  startMultiGame(): void {
     const { canvasWidth, groundY } = this.state;
-    this.state.phase = GamePhase.PvpPlaying;
+    const multi = this.state.multi;
+    if (!multi) return;
+
+    this.state.phase = GamePhase.MultiPlaying;
     this.state.cat = this.createCat(canvasWidth, groundY);
     this.state.obstacles = [];
     this.state.particles = [];
@@ -169,78 +173,98 @@ export class GameModel {
     this.state.elapsedTime = 0;
     this.state.scrollSpeed = this.config.scrollSpeed;
 
-    if (this.state.pvp) {
-      this.state.pvp.selfAlive = true;
-      this.state.pvp.opponent = {
-        y: this.state.cat.y,
+    multi.selfAlive = true;
+    multi.deathOrder = [];
+
+    // Initialize opponents from player list
+    multi.opponents = [];
+    for (const p of multi.players) {
+      if (p.index !== multi.playerIndex && p.connected) {
+        multi.opponents.push({
+          playerIndex: p.index,
+          name: p.name,
+          y: this.state.cat.y,
+          displayY: this.state.cat.y,
+          score: 0,
+          alive: true,
+          lastUpdateTime: 0,
+        });
+      }
+    }
+  }
+
+  updateOpponent(playerIndex: number, y: number, score: number, alive: boolean): void {
+    const multi = this.state.multi;
+    if (!multi) return;
+
+    let opp = multi.opponents.find((o) => o.playerIndex === playerIndex);
+    if (!opp) {
+      // Late joiner — create opponent entry
+      const player = multi.players.find((p) => p.index === playerIndex);
+      opp = {
+        playerIndex,
+        name: player?.name ?? "Player",
+        y,
+        displayY: y,
         score: 0,
         alive: true,
+        lastUpdateTime: performance.now(),
       };
-      this.state.pvp.opponentDisplayY = this.state.cat.y;
-      this.state.pvp.firstDeathTime = 0;
-      this.state.pvp.result = "pending";
-      this.state.pvp.selfRematch = false;
-      this.state.pvp.opponentRematch = false;
+      multi.opponents.push(opp);
     }
-  }
 
-  updateOpponent(y: number, score: number, alive: boolean): void {
-    if (!this.state.pvp) return;
-    this.state.pvp.opponent.y = y;
-    this.state.pvp.opponent.score = score;
-
-    if (this.state.pvp.opponent.alive && !alive) {
-      // Opponent just died
-      this.state.pvp.opponent.alive = false;
-      if (this.state.pvp.firstDeathTime === 0) {
-        this.state.pvp.firstDeathTime = this.state.elapsedTime;
-      }
+    if (opp.alive && !alive) {
+      // Opponent just died — record in death order
+      multi.deathOrder.push({ playerIndex, score });
     }
+
+    opp.y = y;
+    opp.score = score;
+    opp.alive = alive;
+    opp.lastUpdateTime = performance.now();
   }
 
-  setOpponentDisplayY(y: number): void {
-    if (this.state.pvp) this.state.pvp.opponentDisplayY = y;
+  setOpponentDisplayY(playerIndex: number, y: number): void {
+    const multi = this.state.multi;
+    if (!multi) return;
+    const opp = multi.opponents.find((o) => o.playerIndex === playerIndex);
+    if (opp) opp.displayY = y;
   }
 
-  opponentDisconnected(): void {
-    if (!this.state.pvp) return;
-    const phase = this.state.phase;
-
-    if (
-      phase === GamePhase.PvpPlaying ||
-      phase === GamePhase.PvpCountdown ||
-      phase === GamePhase.PvpLobby
-    ) {
-      // Auto-win if mid-race or in lobby
-      this.state.pvp.opponent.alive = false;
-      this.state.pvp.result =
-        phase === GamePhase.PvpLobby ? "pending" : "win";
-      this.state.pvp.error = "Opponent disconnected";
-      if (phase === GamePhase.PvpPlaying) {
-        this.state.phase = GamePhase.PvpResult;
-      } else {
-        this.state.phase = GamePhase.PvpResult;
-      }
-    }
+  /** Self died during multiplayer — switch to spectating. */
+  selfDied(): void {
+    const multi = this.state.multi;
+    if (!multi) return;
+    multi.selfAlive = false;
+    multi.deathOrder.push({
+      playerIndex: multi.playerIndex,
+      score: this.state.score,
+    });
+    this.state.phase = GamePhase.MultiSpectating;
   }
 
-  setSelfRematch(): void {
-    if (this.state.pvp) this.state.pvp.selfRematch = true;
+  /** All players finished — show results. */
+  showResults(): void {
+    this.state.phase = GamePhase.MultiResult;
   }
 
-  setOpponentRematch(): void {
-    if (this.state.pvp) this.state.pvp.opponentRematch = true;
+  /** Connection lost during multiplayer. */
+  multiDisconnected(): void {
+    const multi = this.state.multi;
+    if (!multi) return;
+    multi.error = "Disconnected from server";
+    this.state.phase = GamePhase.MultiResult;
   }
 
   // ── Player Actions ───────────────────────────────────────
 
-  /** Apply jump impulse to the cat. Works during Playing and PvpPlaying. */
+  /** Apply jump impulse to the cat. Works during Playing and MultiPlaying. */
   jump(): void {
     const { phase } = this.state;
     if (phase === GamePhase.Playing) {
       this.state.cat.velocity = this.config.jumpVelocity;
       this.spawnJumpParticles();
-    } else if (phase === GamePhase.PvpPlaying && this.state.pvp?.selfAlive) {
+    } else if (phase === GamePhase.MultiPlaying && this.state.multi?.selfAlive) {
       this.state.cat.velocity = this.config.jumpVelocity;
       this.spawnJumpParticles();
     }
@@ -254,10 +278,15 @@ export class GameModel {
 
     if (phase === GamePhase.Playing) {
       this.updateSolo(dt);
-    } else if (phase === GamePhase.PvpCountdown) {
-      this.updatePvpCountdown(dt);
-    } else if (phase === GamePhase.PvpPlaying) {
-      this.updatePvp(dt);
+    } else if (phase === GamePhase.MultiCountdown) {
+      this.updateMultiCountdown(dt);
+    } else if (phase === GamePhase.MultiPlaying) {
+      this.updateMulti(dt);
+    } else if (phase === GamePhase.MultiSpectating) {
+      // Keep obstacles scrolling for spectating
+      this.state.elapsedTime += dt;
+      this.updateDifficulty();
+      this.updateObstacles(dt);
     }
   }
 
@@ -274,71 +303,34 @@ export class GameModel {
     }
   }
 
-  private updatePvpCountdown(dt: number): void {
-    if (!this.state.pvp) return;
-    this.state.pvp.countdown -= dt;
-    if (this.state.pvp.countdown <= 0) {
-      this.state.pvp.countdown = 0;
-      this.startPvpGame();
+  private updateMultiCountdown(dt: number): void {
+    if (!this.state.multi) return;
+    this.state.multi.countdown -= dt;
+    if (this.state.multi.countdown <= 0) {
+      this.state.multi.countdown = 0;
+      this.startMultiGame();
     }
   }
 
-  private updatePvp(dt: number): void {
-    const pvp = this.state.pvp;
-    if (!pvp) return;
+  private updateMulti(dt: number): void {
+    const multi = this.state.multi;
+    if (!multi) return;
 
     this.state.elapsedTime += dt;
     this.updateDifficulty();
 
-    if (pvp.selfAlive) {
+    if (multi.selfAlive) {
       this.updateCat(dt);
       this.updateParticles(dt);
       this.checkScoring();
 
       if (this.checkCollisions()) {
-        pvp.selfAlive = false;
-        if (pvp.firstDeathTime === 0) {
-          pvp.firstDeathTime = this.state.elapsedTime;
-        }
+        this.selfDied();
       }
     }
 
     // Obstacles keep scrolling for visual continuity
     this.updateObstacles(dt);
-
-    // Check race end
-    this.checkPvpRaceEnd();
-  }
-
-  private checkPvpRaceEnd(): void {
-    const pvp = this.state.pvp;
-    if (!pvp || pvp.result !== "pending") return;
-
-    const bothDead = !pvp.selfAlive && !pvp.opponent.alive;
-    const timedOut =
-      pvp.firstDeathTime > 0 &&
-      this.state.elapsedTime - pvp.firstDeathTime >=
-        this.config.pvpResultTimeout;
-
-    if (bothDead || timedOut) {
-      this.endPvpRace();
-    }
-  }
-
-  private endPvpRace(): void {
-    const pvp = this.state.pvp;
-    if (!pvp) return;
-
-    if (this.state.score > pvp.opponent.score) {
-      pvp.result = "win";
-    } else if (this.state.score < pvp.opponent.score) {
-      pvp.result = "lose";
-    } else {
-      // Tiebreaker: server-assigned coin flip
-      pvp.result = pvp.tiebreaker === pvp.playerIndex ? "win" : "lose";
-    }
-
-    this.state.phase = GamePhase.PvpResult;
   }
 
   // ── Canvas Resize ────────────────────────────────────────

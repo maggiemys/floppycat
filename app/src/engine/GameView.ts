@@ -5,65 +5,39 @@
  *   - Sky gradient background with parallax clouds
  *   - Scrolling ground strip
  *   - Scratching-post style obstacle pipes
- *   - Shape-based cat (no external images)
+ *   - Procedural shape-based cat with parameterized colors
  *   - Jump particles
  *   - Score display
  *   - Menu screen with bobbing cat and title
  *   - Game-over overlay with score summary
- *   - PVP: lobby, countdown, ghost cat, race results with crown
+ *   - Multiplayer: lobby, countdown, ghost cats, leaderboard, results
  *
  * The View has ZERO knowledge of game rules or input.
  * It receives a Readonly<GameState> snapshot and draws it.
  */
 
-import { GameState, GamePhase, GameConfig } from "./types";
+import {
+  GameState,
+  GamePhase,
+  GameConfig,
+  CatColorPalette,
+  CAT_COLORS,
+  OpponentState,
+} from "./types";
 
-// ── Cat Color Palettes ──────────────────────────────────
-
-interface CatColors {
-  body: string;
-  stroke: string;
-  paw: string;
-}
-
-const PLAYER_COLORS: CatColors = {
-  body: "#F4A460",
-  stroke: "#E8941A",
-  paw: "#F4C77D",
-};
-
-const GHOST_COLORS: CatColors = {
-  body: "#90EE90",
-  stroke: "#3CB371",
-  paw: "#B2F2B2",
-};
-
-// ── Layout constants for hit-testable UI ────────────────
-// These are also used by the Controller for hit testing.
-// Positions are fractions of canvas dimensions.
-
-export const RACE_BUTTON_Y_FRAC = 0.82;
-export const RACE_BUTTON_W = 170;
-export const RACE_BUTTON_H = 38;
-
-export const COPY_BUTTON_Y_FRAC = 0.52;
-export const COPY_BUTTON_W = 140;
-export const COPY_BUTTON_H = 34;
+// Layout constant for the "Multiplayer" button on the menu (for hit testing by Controller)
+export const MULTI_BUTTON_Y_FRAC = 0.82;
+export const MULTI_BUTTON_W = 170;
+export const MULTI_BUTTON_H = 38;
 
 export class GameView {
   private ctx: CanvasRenderingContext2D;
   private config: GameConfig;
   private frameCount = 0;
-  private catSprite: HTMLImageElement;
-  private catSpriteLoaded = false;
 
   constructor(ctx: CanvasRenderingContext2D, config: GameConfig) {
     this.ctx = ctx;
     this.config = config;
-
-    this.catSprite = new Image();
-    this.catSprite.onload = () => { this.catSpriteLoaded = true; };
-    this.catSprite.src = "/sprites/right_cat.png";
   }
 
   /** Replace the rendering context (e.g. after resize). */
@@ -83,7 +57,7 @@ export class GameView {
       case GamePhase.Menu:
         this.drawBackground(state);
         this.drawGround(state);
-        this.drawCat(state);
+        this.drawMenuCat(state);
         this.drawMenu(state);
         break;
 
@@ -92,7 +66,7 @@ export class GameView {
         this.drawGround(state);
         this.drawObstacles(state);
         this.drawParticles(state);
-        this.drawCat(state);
+        this.drawCatFromState(state, false);
         this.drawScore(state);
         break;
 
@@ -101,40 +75,48 @@ export class GameView {
         this.drawGround(state);
         this.drawObstacles(state);
         this.drawParticles(state);
-        this.drawCat(state);
+        this.drawCatFromState(state, true);
         this.drawScore(state);
         this.drawGameOver(state);
         break;
 
-      case GamePhase.PvpLobby:
+      case GamePhase.MultiLobby:
         this.drawBackground(state);
         this.drawGround(state);
-        this.drawLobby(state);
+        this.drawMultiLobby(state);
         break;
 
-      case GamePhase.PvpCountdown:
+      case GamePhase.MultiCountdown:
         this.drawBackground(state);
         this.drawGround(state);
-        this.drawCat(state);
-        this.drawCountdown(state);
+        this.drawCatFromState(state, false);
+        this.drawMultiCountdown(state);
         break;
 
-      case GamePhase.PvpPlaying:
+      case GamePhase.MultiPlaying:
         this.drawBackground(state);
         this.drawGround(state);
         this.drawObstacles(state);
         this.drawParticles(state);
-        this.drawGhostCat(state);
-        this.drawCat(state);
-        this.drawPvpHud(state);
+        this.drawGhostCats(state);
+        this.drawCatFromState(state, !state.multi?.selfAlive);
+        this.drawLeaderboard(state);
         break;
 
-      case GamePhase.PvpResult:
+      case GamePhase.MultiSpectating:
         this.drawBackground(state);
         this.drawGround(state);
         this.drawObstacles(state);
-        this.drawCat(state);
-        this.drawPvpResult(state);
+        this.drawGhostCats(state);
+        this.drawCatFromState(state, true);
+        this.drawSpectatingOverlay(state);
+        this.drawLeaderboard(state);
+        break;
+
+      case GamePhase.MultiResult:
+        this.drawBackground(state);
+        this.drawGround(state);
+        this.drawMultiResult(state);
         break;
     }
   }
@@ -145,7 +127,6 @@ export class GameView {
     const { ctx } = this;
     const { canvasWidth: w, groundY } = state;
 
-    // Sky gradient
     const grad = ctx.createLinearGradient(0, 0, 0, groundY);
     grad.addColorStop(0, "#87CEEB");
     grad.addColorStop(0.7, "#B0E0F0");
@@ -264,135 +245,169 @@ export class GameView {
     ctx.stroke();
   }
 
-  // ── Cat (Parameterized) ──────────────────────────────────
+  // ── Cat Drawing ───────────────────────────────────────────
 
   /** Draw the player's cat from game state. */
-  private drawCat(state: Readonly<GameState>): void {
-    const { cat, phase, pvp } = state;
-    const isDead =
-      phase === GamePhase.GameOver ||
-      (phase === GamePhase.PvpPlaying && pvp !== null && !pvp.selfAlive) ||
-      (phase === GamePhase.PvpResult && pvp !== null && pvp.result !== "win");
-
-    // On menu, show bobbing cat
-    if (phase === GamePhase.Menu) {
-      const bob = Math.sin(this.frameCount * 0.05) * 12;
-      this.drawCatSprite(
-        cat.x,
-        state.canvasHeight * 0.42 + bob,
-        0,
-        cat.width,
-        cat.height,
-        false,
-        PLAYER_COLORS
-      );
-      return;
-    }
-
-    this.drawCatSprite(
-      cat.x,
-      cat.y,
-      cat.rotation,
-      cat.width,
-      cat.height,
-      isDead,
-      PLAYER_COLORS
-    );
+  private drawCatFromState(state: Readonly<GameState>, isDead: boolean): void {
+    const { cat, multi } = state;
+    const colorIndex = multi ? multi.playerIndex : 0;
+    const colors = CAT_COLORS[colorIndex] ?? CAT_COLORS[0];
+    this.drawCat(cat.x, cat.y, cat.rotation, cat.width, cat.height, isDead, colors, 1.0);
   }
 
-  /** Draw the opponent ghost cat (pink, semi-transparent). */
-  private drawGhostCat(state: Readonly<GameState>): void {
-    const { pvp, cat } = state;
-    if (!pvp) return;
-
-    const ghostAlpha = pvp.opponent.alive ? 0.5 : 0.3;
-    if (ghostAlpha <= 0) return;
-
-    this.ctx.save();
-    this.ctx.globalAlpha = ghostAlpha;
-    this.drawCatSprite(
+  /** Draw the bobbing cat on the menu. */
+  private drawMenuCat(state: Readonly<GameState>): void {
+    const { cat } = state;
+    const bob = Math.sin(this.frameCount * 0.05) * 12;
+    this.drawCat(
       cat.x,
-      pvp.opponentDisplayY,
+      state.canvasHeight * 0.42 + bob,
       0,
       cat.width,
       cat.height,
-      !pvp.opponent.alive,
-      GHOST_COLORS
+      false,
+      CAT_COLORS[0],
+      1.0
     );
-    this.ctx.restore();
   }
 
-  /** Core cat drawing with explicit parameters. */
-  private drawCatSprite(
+  /** Draw ghost cats for all opponents in multiplayer. */
+  private drawGhostCats(state: Readonly<GameState>): void {
+    const multi = state.multi;
+    if (!multi) return;
+
+    for (const opp of multi.opponents) {
+      const colors = CAT_COLORS[opp.playerIndex % CAT_COLORS.length];
+      const alpha = opp.alive ? 0.4 : 0.25;
+      this.drawCat(
+        state.cat.x, // same x position as player
+        opp.displayY,
+        0,
+        state.cat.width,
+        state.cat.height,
+        !opp.alive,
+        colors,
+        alpha
+      );
+    }
+  }
+
+  /** Core procedural cat drawing with parameterized colors and alpha. */
+  private drawCat(
     x: number,
     y: number,
     rotation: number,
     bw: number,
     bh: number,
     isDead: boolean,
-    colors: CatColors
+    colors: CatColorPalette,
+    alpha: number
   ): void {
     const { ctx } = this;
 
     ctx.save();
+    ctx.globalAlpha = alpha;
     ctx.translate(x, y);
     ctx.rotate(rotation);
 
-    if (this.catSpriteLoaded) {
-      const aspect = this.catSprite.naturalWidth / this.catSprite.naturalHeight;
-      const drawH = bh * 2;
-      const drawW = drawH * aspect;
+    // Tail — bezier curve behind the body
+    ctx.strokeStyle = colors.accent;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    const tailWag = Math.sin(this.frameCount * 0.15) * 5;
+    ctx.moveTo(-bw / 2, 0);
+    ctx.quadraticCurveTo(-bw / 2 - 12, -15 + tailWag, -bw / 2 - 8, -25 + tailWag);
+    ctx.stroke();
 
-      // Green hue shift for ghost/opponent cat
-      if (colors === GHOST_COLORS) {
-        ctx.filter = "hue-rotate(90deg) saturate(1.5)";
+    // Body — ellipse
+    ctx.fillStyle = colors.body;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, bw / 2, bh / 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = colors.accent;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Front paws
+    ctx.fillStyle = colors.paw;
+    ctx.beginPath();
+    ctx.ellipse(bw / 4, bh / 2 - 2, 5, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(bw / 4 + 8, bh / 2 - 2, 5, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Head — circle on the right (front) side
+    const headX = bw / 2 - 4;
+    const headY = -4;
+    const headR = 13;
+
+    ctx.fillStyle = colors.body;
+    ctx.beginPath();
+    ctx.arc(headX, headY, headR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = colors.accent;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Ears — outer
+    ctx.fillStyle = colors.accent;
+    this.drawTriangle(headX - 8, headY - headR + 1, headX - 13, headY - headR - 10, headX - 3, headY - headR - 8);
+    this.drawTriangle(headX + 8, headY - headR + 1, headX + 3, headY - headR - 10, headX + 13, headY - headR - 8);
+
+    // Ears — inner (pink)
+    ctx.fillStyle = "#FFB6C1";
+    this.drawTriangle(headX - 7, headY - headR + 1, headX - 11, headY - headR - 7, headX - 4, headY - headR - 6);
+    this.drawTriangle(headX + 7, headY - headR + 1, headX + 4, headY - headR - 7, headX + 11, headY - headR - 6);
+
+    // Eyes
+    if (isDead) {
+      ctx.strokeStyle = "#333";
+      ctx.lineWidth = 2;
+      const eyeOffsets = [-5, 5];
+      for (const ox of eyeOffsets) {
+        const ex = headX + ox;
+        const ey = headY - 2;
+        ctx.beginPath();
+        ctx.moveTo(ex - 3, ey - 3);
+        ctx.lineTo(ex + 3, ey + 3);
+        ctx.moveTo(ex + 3, ey - 3);
+        ctx.lineTo(ex - 3, ey + 3);
+        ctx.stroke();
       }
-
-      ctx.drawImage(this.catSprite, -drawW / 2, -drawH / 2, drawW, drawH);
-      ctx.filter = "none";
-
-      // X eyes for dead state
-      if (isDead) {
-        ctx.strokeStyle = "#333";
-        ctx.lineWidth = 2.5;
-        const headOx = drawW * 0.15;
-        const headOy = -drawH * 0.08;
-        for (const ox of [-4, 4]) {
-          const ex = headOx + ox;
-          const ey = headOy;
-          ctx.beginPath();
-          ctx.moveTo(ex - 3, ey - 3);
-          ctx.lineTo(ex + 3, ey + 3);
-          ctx.moveTo(ex + 3, ey - 3);
-          ctx.lineTo(ex - 3, ey + 3);
-          ctx.stroke();
-        }
-      }
+    } else {
+      ctx.fillStyle = "white";
+      ctx.beginPath();
+      ctx.arc(headX - 5, headY - 2, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(headX + 5, headY - 2, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#333";
+      ctx.beginPath();
+      ctx.arc(headX - 4, headY - 2, 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(headX + 6, headY - 2, 2, 0, Math.PI * 2);
+      ctx.fill();
     }
 
-    ctx.restore();
-  }
+    // Nose
+    ctx.fillStyle = "#FFB6C1";
+    this.drawTriangle(headX, headY + 3, headX - 2.5, headY + 1, headX + 2.5, headY + 1);
 
-  // ── Crown ────────────────────────────────────────────────
-
-  private drawCrown(x: number, y: number): void {
-    const { ctx } = this;
-    ctx.save();
-    ctx.fillStyle = "#FFD700";
-    ctx.strokeStyle = "#DAA520";
-    ctx.lineWidth = 1.5;
-
-    ctx.beginPath();
-    ctx.moveTo(x - 12, y + 2);
-    ctx.lineTo(x - 10, y - 8);
-    ctx.lineTo(x - 5, y - 2);
-    ctx.lineTo(x, y - 12);
-    ctx.lineTo(x + 5, y - 2);
-    ctx.lineTo(x + 10, y - 8);
-    ctx.lineTo(x + 12, y + 2);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
+    // Whiskers
+    ctx.strokeStyle = "#666";
+    ctx.lineWidth = 0.8;
+    for (const side of [-1, 1]) {
+      for (let i = -1; i <= 1; i++) {
+        ctx.beginPath();
+        ctx.moveTo(headX + side * 4, headY + 4);
+        ctx.lineTo(headX + side * 18, headY + 2 + i * 4);
+        ctx.stroke();
+      }
+    }
 
     ctx.restore();
   }
@@ -430,6 +445,61 @@ export class GameView {
 
     ctx.fillStyle = "white";
     ctx.fillText(String(state.score), x, 30);
+    ctx.restore();
+  }
+
+  // ── Leaderboard (Multiplayer HUD) ────────────────────────
+
+  private drawLeaderboard(state: Readonly<GameState>): void {
+    const { ctx } = this;
+    const multi = state.multi;
+    if (!multi) return;
+
+    // Build sorted list of all players
+    const entries: { name: string; score: number; colorIndex: number; alive: boolean }[] = [];
+    entries.push({
+      name: multi.playerName,
+      score: state.score,
+      colorIndex: multi.playerIndex,
+      alive: multi.selfAlive,
+    });
+    for (const opp of multi.opponents) {
+      entries.push({
+        name: opp.name,
+        score: opp.score,
+        colorIndex: opp.playerIndex,
+        alive: opp.alive,
+      });
+    }
+    entries.sort((a, b) => b.score - a.score);
+
+    ctx.save();
+    const x = 10;
+    let y = 14;
+    const lineHeight = 18;
+
+    for (const entry of entries) {
+      const colors = CAT_COLORS[entry.colorIndex % CAT_COLORS.length];
+
+      // Color dot
+      ctx.fillStyle = colors.body;
+      ctx.beginPath();
+      ctx.arc(x + 5, y + 6, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = colors.accent;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // Name + score
+      ctx.font = "500 12px system-ui";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.fillStyle = entry.alive ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.4)";
+      ctx.fillText(`${entry.name}: ${entry.score}`, x + 14, y);
+
+      y += lineHeight;
+    }
+
     ctx.restore();
   }
 
@@ -477,13 +547,13 @@ export class GameView {
       ctx.restore();
     }
 
-    // "Race a Friend" button
+    // "Multiplayer" button
     this.drawButton(
       cx,
-      h * RACE_BUTTON_Y_FRAC,
-      RACE_BUTTON_W,
-      RACE_BUTTON_H,
-      "Race a Friend",
+      h * MULTI_BUTTON_Y_FRAC,
+      MULTI_BUTTON_W,
+      MULTI_BUTTON_H,
+      "Multiplayer",
       "#E8941A",
       "white"
     );
@@ -532,35 +602,35 @@ export class GameView {
     ctx.restore();
   }
 
-  // ── PVP: Lobby ───────────────────────────────────────────
+  // ── Multiplayer: Lobby ───────────────────────────────────
 
-  private drawLobby(state: Readonly<GameState>): void {
+  private drawMultiLobby(state: Readonly<GameState>): void {
     const { ctx } = this;
-    const { canvasWidth: w, canvasHeight: h, pvp } = state;
-    if (!pvp) return;
+    const { canvasWidth: w, canvasHeight: h, multi } = state;
+    if (!multi) return;
     const cx = w / 2;
 
     // Title
     ctx.save();
-    ctx.font = "bold 36px system-ui";
+    ctx.font = "bold 32px system-ui";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.strokeStyle = "rgba(0, 0, 0, 0.3)";
     ctx.lineWidth = 3;
     ctx.lineJoin = "round";
-    ctx.strokeText("PVP Race", cx, h * 0.15);
+    ctx.strokeText("Multiplayer", cx, h * 0.1);
     ctx.fillStyle = "#E8941A";
-    ctx.fillText("PVP Race", cx, h * 0.15);
+    ctx.fillText("Multiplayer", cx, h * 0.1);
     ctx.restore();
 
     // Error state
-    if (pvp.error) {
+    if (multi.error) {
       ctx.save();
       ctx.font = "500 16px system-ui";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillStyle = "#FF6B6B";
-      ctx.fillText(pvp.error, cx, h * 0.4);
+      ctx.fillText(multi.error, cx, h * 0.4);
       ctx.font = "500 14px system-ui";
       ctx.fillStyle = "#666";
       ctx.fillText("Tap to return to menu", cx, h * 0.5);
@@ -568,82 +638,94 @@ export class GameView {
       return;
     }
 
-    // Connecting state
-    if (pvp.roomId === "") {
+    // Room code (big and prominent)
+    if (multi.roomId) {
       ctx.save();
-      ctx.font = "500 18px system-ui";
+      ctx.font = "bold 48px monospace";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillStyle = "#666";
-      const dots = ".".repeat((Math.floor(this.frameCount / 30) % 3) + 1);
-      ctx.fillText(`Connecting${dots}`, cx, h * 0.4);
-      ctx.restore();
-      return;
-    }
-
-    // Room code
-    ctx.save();
-    ctx.font = "bold 48px monospace";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = "#333";
-    ctx.fillText(pvp.roomId, cx, h * 0.32);
-
-    ctx.font = "500 14px system-ui";
-    ctx.fillStyle = "#888";
-    ctx.fillText("Share this code with a friend", cx, h * 0.42);
-    ctx.restore();
-
-    // Copy Link button
-    this.drawButton(
-      cx,
-      h * COPY_BUTTON_Y_FRAC,
-      COPY_BUTTON_W,
-      COPY_BUTTON_H,
-      "Copy Link",
-      "#4CAF50",
-      "white"
-    );
-
-    // Connection status
-    ctx.save();
-    ctx.font = "500 16px system-ui";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-
-    if (!pvp.opponentConnected) {
-      ctx.fillStyle = "#888";
-      const dots = ".".repeat((Math.floor(this.frameCount / 30) % 3) + 1);
-      ctx.fillText(`Waiting for opponent${dots}`, cx, h * 0.65);
-    } else if (!pvp.selfReady) {
-      ctx.fillStyle = "#4CAF50";
-      ctx.fillText("Opponent connected!", cx, h * 0.62);
-
-      // Pulsing "Tap to Ready"
-      const pulse = 0.5 + 0.5 * Math.sin(this.frameCount * 0.06);
-      ctx.globalAlpha = pulse;
-      ctx.font = "600 18px system-ui";
       ctx.fillStyle = "#333";
-      ctx.fillText("Tap to Ready", cx, h * 0.72);
-    } else if (!pvp.opponentReady) {
-      ctx.fillStyle = "#4CAF50";
-      ctx.fillText("You're ready!", cx, h * 0.62);
+      ctx.fillText(multi.roomId, cx, h * 0.22);
+
+      ctx.font = "500 13px system-ui";
       ctx.fillStyle = "#888";
-      const dots = ".".repeat((Math.floor(this.frameCount / 30) % 3) + 1);
-      ctx.fillText(`Waiting for opponent${dots}`, cx, h * 0.72);
+      ctx.fillText("Share this code", cx, h * 0.3);
+      ctx.restore();
     }
 
-    ctx.restore();
+    // Player list with cat colors
+    const connectedPlayers = multi.players.filter((p) => p.connected);
+    const startY = h * 0.38;
+    const rowHeight = 32;
+
+    for (let i = 0; i < connectedPlayers.length; i++) {
+      const p = connectedPlayers[i];
+      const colors = CAT_COLORS[p.index % CAT_COLORS.length];
+      const y = startY + i * rowHeight;
+
+      // Color dot
+      ctx.save();
+      ctx.fillStyle = colors.body;
+      ctx.beginPath();
+      ctx.arc(cx - 70, y, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = colors.accent;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Player name
+      ctx.font = "500 16px system-ui";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#333";
+      const label = p.index === multi.playerIndex ? `${p.name} (you)` : p.name;
+      ctx.fillText(label, cx - 54, y);
+
+      // Host badge
+      if (p.index === 0) {
+        ctx.font = "500 11px system-ui";
+        ctx.fillStyle = "#E8941A";
+        ctx.fillText("HOST", cx + 60, y);
+      }
+
+      ctx.restore();
+    }
+
+    // Bottom area: start button or waiting message
+    const bottomY = h * 0.85;
+    if (multi.isHost) {
+      if (connectedPlayers.length >= 2) {
+        this.drawButton(cx, bottomY, 140, 38, "Start", "#4CAF50", "white");
+      } else {
+        ctx.save();
+        ctx.font = "500 14px system-ui";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#888";
+        const dots = ".".repeat((Math.floor(this.frameCount / 30) % 3) + 1);
+        ctx.fillText(`Waiting for players${dots}`, cx, bottomY);
+        ctx.restore();
+      }
+    } else {
+      ctx.save();
+      ctx.font = "500 14px system-ui";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#888";
+      const dots = ".".repeat((Math.floor(this.frameCount / 30) % 3) + 1);
+      ctx.fillText(`Waiting for host to start${dots}`, cx, bottomY);
+      ctx.restore();
+    }
   }
 
-  // ── PVP: Countdown ───────────────────────────────────────
+  // ── Multiplayer: Countdown ───────────────────────────────
 
-  private drawCountdown(state: Readonly<GameState>): void {
+  private drawMultiCountdown(state: Readonly<GameState>): void {
     const { ctx } = this;
-    const { canvasWidth: w, canvasHeight: h, pvp } = state;
-    if (!pvp) return;
+    const { canvasWidth: w, canvasHeight: h, multi } = state;
+    if (!multi) return;
 
-    const num = Math.ceil(pvp.countdown);
+    const num = Math.ceil(multi.countdown);
     if (num <= 0) return;
 
     ctx.save();
@@ -662,61 +744,47 @@ export class GameView {
     ctx.restore();
   }
 
-  // ── PVP: In-Race HUD ────────────────────────────────────
+  // ── Multiplayer: Spectating Overlay ──────────────────────
 
-  private drawPvpHud(state: Readonly<GameState>): void {
+  private drawSpectatingOverlay(state: Readonly<GameState>): void {
     const { ctx } = this;
-    const { canvasWidth: w, pvp, score } = state;
-    if (!pvp) return;
+    const { canvasWidth: w, canvasHeight: h, multi } = state;
+    if (!multi) return;
 
+    // Light dark overlay
     ctx.save();
-    ctx.textBaseline = "top";
-    ctx.lineJoin = "round";
+    ctx.fillStyle = "rgba(0, 0, 0, 0.2)";
+    ctx.fillRect(0, 0, w, h);
 
-    // Player score (left)
-    ctx.font = "bold 36px system-ui";
-    ctx.textAlign = "left";
+    // Placement text
+    const aliveCount = multi.opponents.filter((o) => o.alive).length;
+    const totalPlayers = multi.opponents.length + 1;
+    const placement = totalPlayers - multi.deathOrder.length + aliveCount;
+
+    ctx.font = "600 24px system-ui";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
     ctx.strokeStyle = "rgba(0, 0, 0, 0.4)";
     ctx.lineWidth = 3;
-    ctx.strokeText(String(score), 16, 14);
+    ctx.lineJoin = "round";
+    const text = `#${placement} — Score: ${state.score}`;
+    ctx.strokeText(text, w / 2, h * 0.45);
     ctx.fillStyle = "white";
-    ctx.fillText(String(score), 16, 14);
+    ctx.fillText(text, w / 2, h * 0.45);
 
-    // Opponent score (right, green)
-    ctx.textAlign = "right";
-    ctx.strokeText(String(pvp.opponent.score), w - 16, 14);
-    ctx.fillStyle = "#90EE90";
-    ctx.fillText(String(pvp.opponent.score), w - 16, 14);
-
-    // Labels
-    ctx.font = "500 12px system-ui";
-    ctx.fillStyle = "rgba(255,255,255,0.7)";
-    ctx.textAlign = "left";
-    ctx.fillText("You", 16, 52);
-    ctx.textAlign = "right";
-    ctx.fillText("Opponent", w - 16, 52);
-
-    // If self is dead, show overlay
-    if (!pvp.selfAlive) {
-      ctx.fillStyle = "rgba(0, 0, 0, 0.25)";
-      ctx.fillRect(0, 0, w, state.canvasHeight);
-
-      ctx.font = "600 18px system-ui";
-      ctx.textAlign = "center";
-      ctx.fillStyle = "white";
-      const dots = ".".repeat((Math.floor(this.frameCount / 30) % 3) + 1);
-      ctx.fillText(`Waiting for opponent${dots}`, w / 2, state.canvasHeight * 0.45);
-    }
+    ctx.font = "500 14px system-ui";
+    ctx.fillStyle = "rgba(255,255,255,0.6)";
+    ctx.fillText("Spectating...", w / 2, h * 0.52);
 
     ctx.restore();
   }
 
-  // ── PVP: Results ─────────────────────────────────────────
+  // ── Multiplayer: Results ─────────────────────────────────
 
-  private drawPvpResult(state: Readonly<GameState>): void {
+  private drawMultiResult(state: Readonly<GameState>): void {
     const { ctx } = this;
-    const { canvasWidth: w, canvasHeight: h, pvp, score } = state;
-    if (!pvp) return;
+    const { canvasWidth: w, canvasHeight: h, multi } = state;
+    if (!multi) return;
     const cx = w / 2;
 
     ctx.save();
@@ -725,83 +793,125 @@ export class GameView {
     ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
     ctx.fillRect(0, 0, w, h);
 
-    // Result text
-    ctx.font = "bold 36px system-ui";
+    // Title
+    ctx.font = "bold 32px system-ui";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.strokeStyle = "rgba(0, 0, 0, 0.4)";
     ctx.lineWidth = 3;
     ctx.lineJoin = "round";
-
-    const resultText = pvp.result === "win" ? "You Win!" : "You Lose!";
-    const resultColor = pvp.result === "win" ? "#FFD700" : "#FF6B6B";
-    ctx.strokeText(resultText, cx, h * 0.18);
-    ctx.fillStyle = resultColor;
-    ctx.fillText(resultText, cx, h * 0.18);
-
-    // Scores side by side
-    const leftX = w * 0.3;
-    const rightX = w * 0.7;
-    const scoreY = h * 0.32;
-
-    ctx.font = "500 14px system-ui";
-    ctx.fillStyle = "#ccc";
-    ctx.fillText("You", leftX, scoreY - 14);
-    ctx.fillText("Opponent", rightX, scoreY - 14);
-
-    ctx.font = "bold 36px system-ui";
+    ctx.strokeText("Results", cx, h * 0.12);
     ctx.fillStyle = "white";
-    ctx.fillText(String(score), leftX, scoreY + 16);
-    ctx.fillText(String(pvp.opponent.score), rightX, scoreY + 16);
+    ctx.fillText("Results", cx, h * 0.12);
 
-    // Draw cats
-    const catY = h * 0.56;
-    const catW = state.cat.width;
-    const catH = state.cat.height;
-    const playerIsWinner = pvp.result === "win";
-
-    this.drawCatSprite(
-      leftX, catY, 0, catW, catH,
-      !playerIsWinner, PLAYER_COLORS
-    );
-    this.drawCatSprite(
-      rightX, catY, 0, catW, catH,
-      playerIsWinner, GHOST_COLORS
-    );
-
-    // Crown on winner
-    const crownOffset = catW / 2 - 4; // headX relative to cat center
-    if (playerIsWinner) {
-      this.drawCrown(leftX + crownOffset, catY - 4 - 13 - 3);
-    } else {
-      this.drawCrown(rightX + crownOffset, catY - 4 - 13 - 3);
-    }
-
-    // Disconnect message if applicable
-    if (pvp.error) {
+    // Error message
+    if (multi.error) {
       ctx.font = "500 14px system-ui";
       ctx.fillStyle = "#FF6B6B";
-      ctx.fillText(pvp.error, cx, h * 0.68);
+      ctx.fillText(multi.error, cx, h * 0.2);
     }
 
-    // Rematch prompt
-    ctx.font = "600 18px system-ui";
-    ctx.textAlign = "center";
-    if (pvp.selfRematch && !pvp.opponentRematch) {
-      ctx.fillStyle = "#aaa";
-      const dots = ".".repeat((Math.floor(this.frameCount / 30) % 3) + 1);
-      ctx.fillText(`Waiting for opponent${dots}`, cx, h * 0.78);
-    } else if (!pvp.error) {
-      const pulse = 0.5 + 0.5 * Math.sin(this.frameCount * 0.06);
-      ctx.globalAlpha = pulse;
-      ctx.fillStyle = "white";
-      ctx.fillText("Tap to Rematch", cx, h * 0.78);
-    } else {
-      const pulse = 0.5 + 0.5 * Math.sin(this.frameCount * 0.06);
-      ctx.globalAlpha = pulse;
-      ctx.fillStyle = "white";
-      ctx.fillText("Tap to Exit", cx, h * 0.78);
+    // Build ranked list (highest score first)
+    const entries: { name: string; score: number; colorIndex: number }[] = [];
+    entries.push({
+      name: multi.playerName,
+      score: state.score,
+      colorIndex: multi.playerIndex,
+    });
+    for (const opp of multi.opponents) {
+      entries.push({
+        name: opp.name,
+        score: opp.score,
+        colorIndex: opp.playerIndex,
+      });
     }
+    entries.sort((a, b) => b.score - a.score);
+
+    const startY = h * 0.25;
+    const rowHeight = 36;
+
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const y = startY + i * rowHeight;
+      const colors = CAT_COLORS[entry.colorIndex % CAT_COLORS.length];
+      const isPlayer = entry.colorIndex === multi.playerIndex;
+
+      // Placement number
+      ctx.font = "bold 18px system-ui";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = i === 0 ? "#FFD700" : "rgba(255,255,255,0.7)";
+      ctx.fillText(`#${i + 1}`, cx - 80, y);
+
+      // Color dot
+      ctx.fillStyle = colors.body;
+      ctx.beginPath();
+      ctx.arc(cx - 62, y, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = colors.accent;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Name
+      ctx.font = isPlayer ? "bold 15px system-ui" : "500 15px system-ui";
+      ctx.textAlign = "left";
+      ctx.fillStyle = isPlayer ? "white" : "rgba(255,255,255,0.7)";
+      ctx.fillText(entry.name, cx - 48, y);
+
+      // Score
+      ctx.textAlign = "right";
+      ctx.fillText(String(entry.score), cx + 90, y);
+
+      // Crown for #1
+      if (i === 0) {
+        this.drawCrown(cx - 62, y - 18);
+      }
+    }
+
+    // Bottom: restart or exit
+    const bottomY = h * 0.88;
+    if (multi.isHost && !multi.error) {
+      this.drawButton(cx, bottomY, 160, 38, "Play Again", "#4CAF50", "white");
+    } else if (multi.error) {
+      const pulse = 0.5 + 0.5 * Math.sin(this.frameCount * 0.06);
+      ctx.globalAlpha = pulse;
+      ctx.font = "600 18px system-ui";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "white";
+      ctx.fillText("Tap to Exit", cx, bottomY);
+    } else {
+      ctx.font = "500 14px system-ui";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#888";
+      const dots = ".".repeat((Math.floor(this.frameCount / 30) % 3) + 1);
+      ctx.fillText(`Waiting for host${dots}`, cx, bottomY);
+    }
+
+    ctx.restore();
+  }
+
+  // ── Crown ────────────────────────────────────────────────
+
+  private drawCrown(x: number, y: number): void {
+    const { ctx } = this;
+    ctx.save();
+    ctx.fillStyle = "#FFD700";
+    ctx.strokeStyle = "#DAA520";
+    ctx.lineWidth = 1.5;
+
+    ctx.beginPath();
+    ctx.moveTo(x - 8, y + 2);
+    ctx.lineTo(x - 6, y - 5);
+    ctx.lineTo(x - 3, y - 1);
+    ctx.lineTo(x, y - 8);
+    ctx.lineTo(x + 3, y - 1);
+    ctx.lineTo(x + 6, y - 5);
+    ctx.lineTo(x + 8, y + 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
 
     ctx.restore();
   }

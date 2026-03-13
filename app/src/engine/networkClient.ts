@@ -1,27 +1,49 @@
 /**
- * WebSocket client for PVP multiplayer.
+ * WebSocket client for multiplayer.
  * Connects to the relay server, manages room lifecycle, and dispatches messages.
  */
 
 export interface OpponentStateData {
+  playerIndex: number;
   y: number;
   score: number;
   alive: boolean;
 }
 
-export class PvpClient {
+export interface RoomJoinedData {
+  room: string;
+  playerIndex: number;
+  players: { index: number; name: string }[];
+  started: boolean;
+  seed: number;
+  startedAt: number;
+}
+
+export interface PlayerJoinedData {
+  playerIndex: number;
+  playerCount: number;
+  name: string;
+}
+
+export interface StartData {
+  seed: number;
+  tiebreaker: number;
+  startedAt: number;
+}
+
+export class NetworkClient {
   private ws: WebSocket | null = null;
   private url: string;
 
   // Callbacks — set by the Controller
-  onRoomCreated: ((roomId: string) => void) | null = null;
-  onRoomJoined: ((roomId: string) => void) | null = null;
-  onOpponentJoined: (() => void) | null = null;
-  onOpponentReady: (() => void) | null = null;
-  onStart: ((seed: number, tiebreaker: number) => void) | null = null;
+  onRoomCreated: ((roomId: string, playerIndex: number) => void) | null = null;
+  onRoomJoined: ((data: RoomJoinedData) => void) | null = null;
+  onPlayerJoined: ((data: PlayerJoinedData) => void) | null = null;
+  onPlayerLeft: ((playerIndex: number, playerCount: number) => void) | null = null;
+  onStart: ((data: StartData) => void) | null = null;
   onOpponentState: ((data: OpponentStateData) => void) | null = null;
-  onOpponentDisconnected: (() => void) | null = null;
-  onOpponentRematch: (() => void) | null = null;
+  onAllFinished: (() => void) | null = null;
+  onDisconnected: (() => void) | null = null;
   onError: ((message: string) => void) | null = null;
 
   constructor(url: string) {
@@ -45,7 +67,7 @@ export class PvpClient {
           }
         };
         this.ws!.onclose = () => {
-          this.onOpponentDisconnected?.();
+          this.onDisconnected?.();
         };
         resolve();
       };
@@ -54,24 +76,24 @@ export class PvpClient {
     });
   }
 
-  createRoom(): void {
-    this.send({ type: "create_room" });
+  createRoom(maxPlayers: number, name: string): void {
+    this.send({ type: "create_room", maxPlayers, name });
   }
 
-  joinRoom(roomId: string): void {
-    this.send({ type: "join_room", room: roomId });
+  joinRoom(roomId: string, name: string): void {
+    this.send({ type: "join_room", room: roomId, name });
   }
 
-  sendReady(): void {
-    this.send({ type: "ready" });
+  sendStartGame(): void {
+    this.send({ type: "start_game" });
   }
 
   sendState(score: number, alive: boolean, y: number): void {
     this.send({ type: "state", score, alive, y });
   }
 
-  sendRematch(): void {
-    this.send({ type: "rematch" });
+  sendRestartGame(): void {
+    this.send({ type: "restart_game" });
   }
 
   disconnect(): void {
@@ -91,32 +113,25 @@ export class PvpClient {
   private handleMessage(msg: any): void {
     switch (msg.type) {
       case "room_created":
-        this.onRoomCreated?.(msg.room);
+        this.onRoomCreated?.(msg.room, msg.playerIndex);
         break;
       case "room_joined":
-        this.onRoomJoined?.(msg.room);
+        this.onRoomJoined?.(msg);
         break;
-      case "opponent_joined":
-        this.onOpponentJoined?.();
+      case "player_joined":
+        this.onPlayerJoined?.(msg);
         break;
-      case "opponent_ready":
-        this.onOpponentReady?.();
+      case "player_left":
+        this.onPlayerLeft?.(msg.playerIndex, msg.playerCount);
         break;
       case "start":
-        this.onStart?.(msg.seed, msg.tiebreaker);
+        this.onStart?.(msg);
         break;
       case "opponent_state":
-        this.onOpponentState?.({
-          y: msg.y,
-          score: msg.score,
-          alive: msg.alive,
-        });
+        this.onOpponentState?.(msg);
         break;
-      case "opponent_disconnected":
-        this.onOpponentDisconnected?.();
-        break;
-      case "opponent_rematch":
-        this.onOpponentRematch?.();
+      case "all_finished":
+        this.onAllFinished?.();
         break;
       case "error":
         this.onError?.(msg.message);

@@ -22,73 +22,121 @@ wss.on("connection", (ws) => {
 
     switch (msg.type) {
       case "create_room": {
-        const room = rooms.createRoom(ws);
-        send(ws, { type: "room_created", room: room.id });
+        const maxPlayers = Math.min(Math.max(msg.maxPlayers ?? 10, 2), 10);
+        const name = String(msg.name ?? "Player");
+        const room = rooms.createRoom(ws, maxPlayers, name);
+        send(ws, { type: "room_created", room: room.id, playerIndex: 0 });
         break;
       }
 
       case "join_room": {
-        const room = rooms.joinRoom(msg.room, ws);
-        if (!room) {
+        const name = String(msg.name ?? "Player");
+        const result = rooms.joinRoom(msg.room, ws, name);
+        if (!result) {
           send(ws, { type: "error", message: "Room not found or full" });
           break;
         }
-        send(ws, { type: "room_joined", room: room.id });
-        const host = room.players[0];
-        if (host) send(host, { type: "opponent_joined" });
+        const { room, playerIndex } = result;
+
+        // Tell the joiner about all existing players
+        const existingPlayers: { index: number; name: string }[] = [];
+        for (let i = 0; i < room.players.length; i++) {
+          if (room.players[i] && i !== playerIndex) {
+            existingPlayers.push({ index: i, name: room.names[i] });
+          }
+        }
+        send(ws, {
+          type: "room_joined",
+          room: room.id,
+          playerIndex,
+          players: existingPlayers,
+          started: room.started,
+          seed: room.seed,
+          startedAt: room.startedAt,
+        });
+
+        // Tell all other players about the new joiner
+        const others = rooms.getOtherPlayers(ws);
+        const playerCount = rooms.getConnectedCount(room);
+        for (const other of others) {
+          send(other.ws, {
+            type: "player_joined",
+            playerIndex,
+            playerCount,
+            name,
+          });
+        }
         break;
       }
 
-      case "ready": {
-        const result = rooms.setReady(ws);
-        if (!result) break;
-        const opponent = rooms.getOpponent(ws);
-        if (opponent) send(opponent, { type: "opponent_ready" });
-        if (result.bothReady) {
-          const room = rooms.getPlayerRoom(ws);
-          if (room) {
-            for (const p of room.players) {
-              if (p)
-                send(p, {
-                  type: "start",
-                  seed: result.seed,
-                  tiebreaker: result.tiebreaker,
-                });
-            }
+      case "start_game": {
+        const result = rooms.startGame(ws);
+        if (!result) {
+          send(ws, { type: "error", message: "Cannot start game" });
+          break;
+        }
+        const room = rooms.getPlayerRoom(ws);
+        if (!room) break;
+
+        // Send start to all connected players
+        for (let i = 0; i < room.players.length; i++) {
+          const p = room.players[i];
+          if (p) {
+            send(p, {
+              type: "start",
+              seed: result.seed,
+              tiebreaker: result.tiebreaker,
+              startedAt: result.startedAt,
+            });
           }
         }
         break;
       }
 
       case "state": {
-        const opponent = rooms.getOpponent(ws);
-        if (opponent) {
-          send(opponent, {
+        const playerIndex = rooms.getPlayerIndex(ws);
+        const others = rooms.getOtherPlayers(ws);
+        for (const other of others) {
+          send(other.ws, {
             type: "opponent_state",
+            playerIndex,
             score: msg.score,
             alive: msg.alive,
             y: msg.y,
           });
         }
+
+        // Track deaths for all_finished detection
+        if (msg.alive === false) {
+          const { allFinished } = rooms.playerDied(ws);
+          if (allFinished) {
+            const room = rooms.getPlayerRoom(ws);
+            if (room) {
+              for (let i = 0; i < room.players.length; i++) {
+                const p = room.players[i];
+                if (p) send(p, { type: "all_finished" });
+              }
+            }
+          }
+        }
         break;
       }
 
-      case "rematch": {
-        const result = rooms.setRematch(ws);
+      case "restart_game": {
+        const result = rooms.restartGame(ws);
         if (!result) break;
-        const opponent = rooms.getOpponent(ws);
-        if (opponent) send(opponent, { type: "opponent_rematch" });
-        if (result.bothRematch) {
-          const room = rooms.getPlayerRoom(ws);
-          if (room) {
-            for (const p of room.players) {
-              if (p)
-                send(p, {
-                  type: "start",
-                  seed: result.seed,
-                  tiebreaker: result.tiebreaker,
-                });
-            }
+        const room = rooms.getPlayerRoom(ws);
+        if (!room) break;
+
+        for (let i = 0; i < room.players.length; i++) {
+          const p = room.players[i];
+          if (p) {
+            send(p, {
+              type: "start",
+              seed: result.seed,
+              tiebreaker: result.tiebreaker,
+              startedAt: result.startedAt,
+            });
           }
         }
         break;
@@ -97,10 +145,15 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
-    const opponent = rooms.getOpponent(ws);
-    if (opponent) send(opponent, { type: "opponent_disconnected" });
-    rooms.removePlayer(ws);
+    const result = rooms.removePlayer(ws);
+    if (!result) return;
+    const { room, playerIndex } = result;
+    const playerCount = rooms.getConnectedCount(room);
+    for (let i = 0; i < room.players.length; i++) {
+      const p = room.players[i];
+      if (p) send(p, { type: "player_left", playerIndex, playerCount });
+    }
   });
 });
 
-console.log(`FloppyCat PVP server listening on port ${PORT}`);
+console.log(`FloppyCat multiplayer server listening on port ${PORT}`);
