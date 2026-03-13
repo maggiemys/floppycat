@@ -444,7 +444,7 @@ export class GameController {
 
     if (navigator.share) {
       try {
-        await navigator.share({ title: "FloppyCat", text: `Join my FloppyCat room!`, url });
+        await navigator.share({ title: "FloppyCat", url });
         return;
       } catch {
         // User cancelled or share failed — fall through to clipboard
