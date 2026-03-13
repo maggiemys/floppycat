@@ -25,10 +25,14 @@ import {
   OpponentState,
 } from "./types";
 
-// Layout constant for the "Multiplayer" button on the menu (for hit testing by Controller)
+// Layout constants for hit-testable buttons (shared with Controller)
 export const MULTI_BUTTON_Y_FRAC = 0.82;
 export const MULTI_BUTTON_W = 170;
 export const MULTI_BUTTON_H = 38;
+
+export const COPY_LINK_BUTTON_Y_FRAC = 0.32;
+export const COPY_LINK_BUTTON_W = 130;
+export const COPY_LINK_BUTTON_H = 30;
 
 export class GameView {
   private ctx: CanvasRenderingContext2D;
@@ -646,11 +650,18 @@ export class GameView {
       ctx.textBaseline = "middle";
       ctx.fillStyle = "#333";
       ctx.fillText(multi.roomId, cx, h * 0.22);
-
-      ctx.font = "500 13px system-ui";
-      ctx.fillStyle = "#888";
-      ctx.fillText("Share this code", cx, h * 0.3);
       ctx.restore();
+
+      // "Copy Link" button
+      this.drawButton(
+        cx,
+        h * COPY_LINK_BUTTON_Y_FRAC,
+        COPY_LINK_BUTTON_W,
+        COPY_LINK_BUTTON_H,
+        "Copy Link",
+        "#4CAF50",
+        "white"
+      );
     }
 
     // Player list with cat colors

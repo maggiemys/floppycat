@@ -20,6 +20,9 @@ import {
   MULTI_BUTTON_Y_FRAC,
   MULTI_BUTTON_W,
   MULTI_BUTTON_H,
+  COPY_LINK_BUTTON_Y_FRAC,
+  COPY_LINK_BUTTON_W,
+  COPY_LINK_BUTTON_H,
 } from "./GameView";
 import { GameConfig, GamePhase } from "./types";
 import { NetworkClient } from "./networkClient";
@@ -252,6 +255,12 @@ export class GameController {
           break;
         }
 
+        // Copy link button
+        if (multi.roomId && this.isCopyLinkButtonHit(pos, state)) {
+          this.copyOrShareLink(multi.roomId);
+          break;
+        }
+
         // Host can start when 2+ players
         if (multi.isHost && this.isStartButtonHit(pos, state)) {
           const connectedCount = multi.players.filter((p) => p.connected).length;
@@ -414,6 +423,39 @@ export class GameController {
       pos.y >= cy - PLAY_AGAIN_BUTTON_H / 2 &&
       pos.y <= cy + PLAY_AGAIN_BUTTON_H / 2
     );
+  }
+
+  private isCopyLinkButtonHit(
+    pos: { x: number; y: number },
+    state: Readonly<ReturnType<GameModel["getState"]>>
+  ): boolean {
+    const cx = state.canvasWidth / 2;
+    const cy = state.canvasHeight * COPY_LINK_BUTTON_Y_FRAC;
+    return (
+      pos.x >= cx - COPY_LINK_BUTTON_W / 2 &&
+      pos.x <= cx + COPY_LINK_BUTTON_W / 2 &&
+      pos.y >= cy - COPY_LINK_BUTTON_H / 2 &&
+      pos.y <= cy + COPY_LINK_BUTTON_H / 2
+    );
+  }
+
+  private async copyOrShareLink(roomId: string): Promise<void> {
+    const url = `${window.location.origin}${window.location.pathname}?room=${roomId}`;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "FloppyCat", text: `Join my FloppyCat room!`, url });
+        return;
+      } catch {
+        // User cancelled or share failed — fall through to clipboard
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // Clipboard API not available
+    }
   }
 
   private isDebouncing(): boolean {
