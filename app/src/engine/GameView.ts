@@ -373,21 +373,14 @@ export class GameView {
     const headR = 13;
 
     if (this.headImg) {
-      const drawR = headR * 2.5;
-      const imgSize = drawR * 2.5;
-      ctx.save();
-      // Circular clip for the head
-      ctx.beginPath();
-      ctx.arc(headX, headY, drawR, 0, Math.PI * 2);
-      ctx.clip();
+      const imgSize = headR * 5;
       ctx.drawImage(
         this.headImg,
         headX - imgSize / 2,
-        headY - imgSize / 2,
+        headY - imgSize * 0.55,
         imgSize,
         imgSize
       );
-      ctx.restore();
 
       // X eyes when dead
       if (isDead) {
