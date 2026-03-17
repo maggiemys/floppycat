@@ -5,6 +5,12 @@ services:
     rootDir: server
     buildCommand: npm install && npm run build
     startCommand: npm start
+    disk:
+      name: leaderboard-data
+      mountPath: /data
+      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
+      - key: DB_PATH
+        value: /data/leaderboard.db
