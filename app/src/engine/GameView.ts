@@ -50,10 +50,17 @@ export class GameView {
   private ctx: CanvasRenderingContext2D;
   private config: GameConfig;
   private frameCount = 0;
+  private headImg: HTMLImageElement | null = null;
 
   constructor(ctx: CanvasRenderingContext2D, config: GameConfig) {
     this.ctx = ctx;
     this.config = config;
+
+    const img = new Image();
+    img.src = "sprites/CalvinCat.png";
+    img.onload = () => {
+      this.headImg = img;
+    };
   }
 
   /** Replace the rendering context (e.g. after resize). */
@@ -360,74 +367,110 @@ export class GameView {
     ctx.ellipse(bw / 4 + 8, bh / 2 - 2, 5, 4, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Head — circle on the right (front) side
+    // Head — CalvinCat image (or fallback circle)
     const headX = bw / 2 - 4;
     const headY = -4;
     const headR = 13;
 
-    ctx.fillStyle = colors.body;
-    ctx.beginPath();
-    ctx.arc(headX, headY, headR, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = colors.accent;
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+    if (this.headImg) {
+      const drawR = headR * 2.5;
+      const imgSize = drawR * 2.5;
+      ctx.save();
+      // Circular clip for the head
+      ctx.beginPath();
+      ctx.arc(headX, headY, drawR, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(
+        this.headImg,
+        headX - imgSize / 2,
+        headY - imgSize / 2,
+        imgSize,
+        imgSize
+      );
+      ctx.restore();
 
-    // Ears — outer
-    ctx.fillStyle = colors.accent;
-    this.drawTriangle(headX - 8, headY - headR + 1, headX - 13, headY - headR - 10, headX - 3, headY - headR - 8);
-    this.drawTriangle(headX + 8, headY - headR + 1, headX + 3, headY - headR - 10, headX + 13, headY - headR - 8);
-
-    // Ears — inner (pink)
-    ctx.fillStyle = "#FFB6C1";
-    this.drawTriangle(headX - 7, headY - headR + 1, headX - 11, headY - headR - 7, headX - 4, headY - headR - 6);
-    this.drawTriangle(headX + 7, headY - headR + 1, headX + 4, headY - headR - 7, headX + 11, headY - headR - 6);
-
-    // Eyes
-    if (isDead) {
-      ctx.strokeStyle = "#333";
-      ctx.lineWidth = 2;
-      const eyeOffsets = [-5, 5];
-      for (const ox of eyeOffsets) {
-        const ex = headX + ox;
-        const ey = headY - 2;
-        ctx.beginPath();
-        ctx.moveTo(ex - 3, ey - 3);
-        ctx.lineTo(ex + 3, ey + 3);
-        ctx.moveTo(ex + 3, ey - 3);
-        ctx.lineTo(ex - 3, ey + 3);
-        ctx.stroke();
+      // X eyes when dead
+      if (isDead) {
+        ctx.strokeStyle = "#333";
+        ctx.lineWidth = 2;
+        const eyeOffsets = [-5, 5];
+        for (const ox of eyeOffsets) {
+          const ex = headX + ox;
+          const ey = headY - 2;
+          ctx.beginPath();
+          ctx.moveTo(ex - 3, ey - 3);
+          ctx.lineTo(ex + 3, ey + 3);
+          ctx.moveTo(ex + 3, ey - 3);
+          ctx.lineTo(ex - 3, ey + 3);
+          ctx.stroke();
+        }
       }
     } else {
-      ctx.fillStyle = "white";
+      // Fallback: procedural head
+      ctx.fillStyle = colors.body;
       ctx.beginPath();
-      ctx.arc(headX - 5, headY - 2, 4, 0, Math.PI * 2);
+      ctx.arc(headX, headY, headR, 0, Math.PI * 2);
       ctx.fill();
-      ctx.beginPath();
-      ctx.arc(headX + 5, headY - 2, 4, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#333";
-      ctx.beginPath();
-      ctx.arc(headX - 4, headY - 2, 2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(headX + 6, headY - 2, 2, 0, Math.PI * 2);
-      ctx.fill();
-    }
+      ctx.strokeStyle = colors.accent;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
 
-    // Nose
-    ctx.fillStyle = "#FFB6C1";
-    this.drawTriangle(headX, headY + 3, headX - 2.5, headY + 1, headX + 2.5, headY + 1);
+      // Ears — outer
+      ctx.fillStyle = colors.accent;
+      this.drawTriangle(headX - 8, headY - headR + 1, headX - 13, headY - headR - 10, headX - 3, headY - headR - 8);
+      this.drawTriangle(headX + 8, headY - headR + 1, headX + 3, headY - headR - 10, headX + 13, headY - headR - 8);
 
-    // Whiskers
-    ctx.strokeStyle = "#666";
-    ctx.lineWidth = 0.8;
-    for (const side of [-1, 1]) {
-      for (let i = -1; i <= 1; i++) {
+      // Ears — inner (pink)
+      ctx.fillStyle = "#FFB6C1";
+      this.drawTriangle(headX - 7, headY - headR + 1, headX - 11, headY - headR - 7, headX - 4, headY - headR - 6);
+      this.drawTriangle(headX + 7, headY - headR + 1, headX + 4, headY - headR - 7, headX + 11, headY - headR - 6);
+
+      // Eyes
+      if (isDead) {
+        ctx.strokeStyle = "#333";
+        ctx.lineWidth = 2;
+        const eyeOffsets = [-5, 5];
+        for (const ox of eyeOffsets) {
+          const ex = headX + ox;
+          const ey = headY - 2;
+          ctx.beginPath();
+          ctx.moveTo(ex - 3, ey - 3);
+          ctx.lineTo(ex + 3, ey + 3);
+          ctx.moveTo(ex + 3, ey - 3);
+          ctx.lineTo(ex - 3, ey + 3);
+          ctx.stroke();
+        }
+      } else {
+        ctx.fillStyle = "white";
         ctx.beginPath();
-        ctx.moveTo(headX + side * 4, headY + 4);
-        ctx.lineTo(headX + side * 18, headY + 2 + i * 4);
-        ctx.stroke();
+        ctx.arc(headX - 5, headY - 2, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(headX + 5, headY - 2, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#333";
+        ctx.beginPath();
+        ctx.arc(headX - 4, headY - 2, 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(headX + 6, headY - 2, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Nose
+      ctx.fillStyle = "#FFB6C1";
+      this.drawTriangle(headX, headY + 3, headX - 2.5, headY + 1, headX + 2.5, headY + 1);
+
+      // Whiskers
+      ctx.strokeStyle = "#666";
+      ctx.lineWidth = 0.8;
+      for (const side of [-1, 1]) {
+        for (let i = -1; i <= 1; i++) {
+          ctx.beginPath();
+          ctx.moveTo(headX + side * 4, headY + 4);
+          ctx.lineTo(headX + side * 18, headY + 2 + i * 4);
+          ctx.stroke();
+        }
       }
     }
 
